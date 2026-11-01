@@ -1,0 +1,35 @@
+{
+  "id": "docboard",
+  "name": "Docboard",
+  "version": "0.1.0",
+  "apiVersion": 10,
+  "publisher": "COGNIX[WS]",
+  "description": "The repository's docs in the bottom dock: read, search, see what is open, and operate the development environment. Person-only; no agent tool.",
+  "icon": "icon.svg",
+  "permissions": ["workspaces:read"],
+  "settings": [
+    {
+      "key": "repo_path",
+      "label": "Repository",
+      "type": "text",
+      "description": "Absolute path to the repository to map. Empty uses the first workspace where Docboard is on."
+    },
+    {
+      "key": "allow_commands",
+      "label": "Operate commands",
+      "type": "boolean",
+      "default": true,
+      "description": "Off hides the Operar view and its fixed make targets in this repository."
+    }
+  ],
+  "process": {
+    "command": "node",
+    "args": ["${extensionDir}/process.mjs"]
+  },
+  "ui": {
+    "pages": [{ "id": "board", "title": "Docs", "path": "ui/docs.html" }]
+  },
+  "contributes": {
+    "dockPanels": [{ "id": "docs", "title": "Docs", "page": "board" }]
+  }
+}
