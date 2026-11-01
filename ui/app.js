@@ -961,13 +961,11 @@ function drawGraph() {
         n.y = Math.max(16, Math.min(H - 16, n.y));
       }
       node.attr("cx", (n) => n.x).attr("cy", (n) => n.y);
-      label.attr("x", (n) => {
-        const dx = n.x - W / 2, dy = n.y - H / 2, len = Math.hypot(dx, dy) || 1;
-        return n.x + (dx / len) * 18;
-      }).attr("y", (n) => {
-        const dx = n.x - W / 2, dy = n.y - H / 2, len = Math.hypot(dx, dy) || 1;
-        return n.y + (dy / len) * 18 + 3;
-      }).attr("text-anchor", (n) => (n.x >= W / 2 ? "start" : "end"));
+      label.attr("x", (n) => Math.max(14, Math.min(W - 14, n.x > W * 0.6 ? n.x - 10 : n.x + 10)))
+        .attr("y", (n) => {
+          const dy = n.y - H / 2, len = Math.hypot(n.x - W / 2, dy) || 1;
+          return Math.max(16, Math.min(H - 8, n.y + (dy / len) * 16 + 3));
+        }).attr("text-anchor", (n) => (n.x > W * 0.6 ? "end" : "start"));
     });
   node.call(d3.drag()
     .on("start", (ev, n) => { if (!ev.active) sim.alphaTarget(0.25).restart(); n.fx = n.x; n.fy = n.y; })
