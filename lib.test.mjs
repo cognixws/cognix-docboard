@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildCorpus, searchCorpus, catalog, commandPlan, egoGraph, hubGraph, collectionGraph, backlinksOf } from "./lib.mjs";
+import { buildCorpus, searchCorpus, catalog, commandPlan, egoGraph, hubGraph, collectionGraph, backlinksOf, pulseOf } from "./lib.mjs";
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "docboard-test-"));
@@ -115,4 +115,16 @@ test("ego, hubs and collection graphs stay inside the index", () => {
   assert.ok(cols.edges.some((e) => e.s === "architecture" && e.t === "plans"));
   const back = backlinksOf(c.graph, "docs/decisions/0001-one.md");
   assert.ok(back.backlinks.length >= 1);
+});
+
+test("pulse reports stale living docs and broken links", () => {
+  const repo = fixture();
+  const old = new Date(Date.now() - 400 * 86400000);
+  fs.utimesSync(path.join(repo, "docs/plans/panel.md"), old, old);
+  const c = buildCorpus(repo);
+  const p = pulseOf(c);
+  assert.equal(p.stats.broken, c.graph.broken.length);
+  assert.ok(p.broken.some((b) => b.target.includes("missing.md")));
+  assert.ok(p.stale.some((s) => s.p === "docs/plans/panel.md" && s.age >= 120));
+  assert.equal(p.stats.fragments, 1);
 });

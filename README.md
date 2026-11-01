@@ -32,6 +32,12 @@ The index is built in memory by the extension's own process and refreshed on
 demand or after five minutes. No database, no backup promise: the repository
 is the source of truth.
 
+## Pulse
+
+A health view of the docs: broken links, documents with no link, living docs
+untouched for 120+ days and the latest commits under `docs/`. It reads `git
+log` and the index the process already keeps; no extra state.
+
 ## The graph
 
 The process resolves the links between documents: markdown links, bare

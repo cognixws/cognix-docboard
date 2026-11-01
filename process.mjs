@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn, execFileSync } from "node:child_process";
-import { buildCorpus, sortedFor, searchCorpus, catalog, findCommand, commandPlan, COLLECTIONS, egoGraph, hubGraph, collectionGraph } from "./lib.mjs";
+import { buildCorpus, sortedFor, searchCorpus, catalog, findCommand, commandPlan, COLLECTIONS, egoGraph, hubGraph, collectionGraph, pulseOf } from "./lib.mjs";
 
 const PORT = Number(process.env.PICODE_EXT_PORT || 8799);
 const EXT_DIR = process.env.PICODE_EXT_DIR || process.cwd();
@@ -118,6 +118,25 @@ function lockHeld() {
   } catch (e) {
     return e.status === 1 ? true : null;
   }
+}
+
+function docsHistory(limit = 500) {
+  let out = "";
+  try {
+    out = git(["log", "-" + limit, "--date=short", "--pretty=format:@@%h\t%ad\t%s", "--name-only", "--", "docs"], repo, 6000);
+  } catch { return { commits: [], lastDate: {} }; }
+  const commits = [];
+  const lastDate = {};
+  let cur = null;
+  for (const line of out.split("\n")) {
+    const m = /^@@([^\t]+)\t([^\t]+)\t(.*)$/.exec(line);
+    if (m) { cur = { hash: m[1], date: m[2], subject: m[3], files: [] }; commits.push(cur); continue; }
+    if (cur && line.trim() && !line.startsWith("@@") && line.startsWith("docs/")) {
+      cur.files.push(line.trim());
+      if (!lastDate[line.trim()]) lastDate[line.trim()] = cur.date;
+    }
+  }
+  return { commits: commits.filter((c) => c.files.length), lastDate };
 }
 
 function health(c) {
@@ -342,6 +361,17 @@ const server = http.createServer(async (req, res) => {
 
     if (p === "/open") {
       return json(res, 200, openPage(c, String(q.get("tab") || "all"), q.get("q") || "", q.get("offset"), q.get("limit")));
+    }
+
+    if (p === "/pulse") {
+      const history = docsHistory(500);
+      const pulse = pulseOf(c, { lastDate: history.lastDate });
+      return json(res, 200, {
+        ...pulse,
+        recent: history.commits.slice(0, 10).map((x) => ({ ...x, count: x.files.length, files: x.files.slice(0, 5) })),
+        builtAt: c.builtAt,
+        repo: c.repo,
+      });
     }
 
     if (p === "/graph") {

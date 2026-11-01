@@ -49,6 +49,7 @@ const S = {
   operar: { groups: [], enabled: false, filter: "", group: "all", runs: [], loading: false, timer: null, worktrees: null },
   health: { gates: [], counts: {}, handoffToday: false, loading: false },
   graph: { scope: "hubs", path: "", data: null, loading: false, error: "" },
+  pulse: { data: null, loading: false, error: "" },
   dialog: null,
 };
 
@@ -212,7 +213,7 @@ function render() {
           <div class="sk" style="width:70%"></div><div class="sk" style="width:92%"></div><div class="sk" style="width:55%"></div></div></div>`;
     return;
   }
-  const map = { read: renderRead, search: renderSearch, open: renderOpen, operar: renderOperar, graph: renderGraph, map: renderMap, health: renderHealth };
+  const map = { read: renderRead, search: renderSearch, open: renderOpen, operar: renderOperar, graph: renderGraph, pulse: renderPulse, map: renderMap, health: renderHealth };
   content.innerHTML = (map[S.view] || renderRead)();
   content.scrollTop = S.scroll[keyOf()] || 0;
   S.lastKey = keyOf();
@@ -258,6 +259,9 @@ function syncChrome() {
   } else if (S.view === "graph") {
     title = "Grafo";
     sub = S.graph.path ? "ligações de " + S.graph.path : "ligações entre docs do repositório";
+  } else if (S.view === "pulse") {
+    title = "Pulso";
+    sub = "o estado das docs agora";
   } else if (S.view === "map") {
     title = "Map";
     sub = "saúde das coleções";
@@ -341,7 +345,7 @@ function buildRail() {
   el.innerHTML = item("read", "Read") + item("search", "Search") + item("graph", "Grafo")
     + `<div class="rail-group">Trabalho</div>` + item("open", "Aberto", nf.format((S.stats.debts || 0) + (S.stats.questions || 0)))
     + (S.commandsEnabled ? item("operar", "Operar") : "")
-    + `<div class="rail-group">Saúde</div>` + item("map", "Map") + item("health", "Health")
+    + `<div class="rail-group">Saúde</div>` + item("map", "Map") + item("pulse", "Pulso") + item("health", "Health")
     + `<div class="rail-foot">${esc(repo.split("/").filter(Boolean).pop() || repo)}
        <br>${nf.format(S.stats.docs || 0)} arquivos · ${esc(S.overview ? S.overview.version : "")}</div>`;
   el.querySelectorAll("button[data-view]").forEach((b) => b.addEventListener("click", () => {
@@ -351,6 +355,7 @@ function buildRail() {
     if (b.dataset.view === "operar") void loadCommands();
     if (b.dataset.view === "health") void loadHealth();
     if (b.dataset.view === "graph") void prepareGraph(S.read.doc ? "doc" : "hubs", S.read.doc || "");
+    if (b.dataset.view === "pulse") void preparePulse();
   }));
 }
 
@@ -852,6 +857,61 @@ async function stopRun(id) {
 }
 
 
+
+/* ---------------- Pulse ---------------- */
+
+async function preparePulse() {
+  S.view = "pulse";
+  S.pulse.loading = true;
+  S.pulse.error = "";
+  render();
+  try {
+    S.pulse.data = await call("/pulse");
+  } catch (e) {
+    S.pulse.error = e.message;
+    S.pulse.data = null;
+  }
+  S.pulse.loading = false;
+  render();
+}
+
+function renderPulse() {
+  const p = S.pulse;
+  if (p.loading) return `<div class="sk" style="width:40%"></div><div class="sk" style="width:70%"></div><div class="sk" style="width:55%"></div>`;
+  if (p.error) return `<div class="empty"><b>Não consegui ler o pulso.</b><p>${esc(p.error)}</p><button class="btn sm" type="button" data-act="pulse-refresh">Tentar de novo</button></div>`;
+  const d = p.data;
+  if (!d) return `<div class="empty"><b>Sem dados ainda.</b><p>Atualize para ler o repositório.</p><button class="btn sm" type="button" data-act="pulse-refresh">Atualizar</button></div>`;
+  const st = d.stats || {};
+  const kpis = [
+    { v: nf.format(st.broken || 0), l: "links quebrados", c: "destinos .md que não existem", act: "focus", target: "pulse-broken" },
+    { v: nf.format(st.orphans || 0), l: "docs sem ligação", c: "nem entram nem saem", act: "graph", target: "" },
+    { v: nf.format(st.stale || 0), l: "docs frios", c: "planos, arquitetura, books e raiz há 60+ dias", act: "focus", target: "pulse-stale" },
+    { v: nf.format(st.fragments || 0), l: "fragmentos de changelog", c: "ainda não dobrados", act: "coll", target: "changelog" },
+  ].map((k) => `<button class="kpi" type="button" data-act="${k.act === "focus" ? "pulse-focus" : k.act === "graph" ? "pulse-graph" : "coll"}" ${k.act === "focus" ? `data-target="${k.target}"` : k.act === "coll" ? `data-coll="${k.target}"` : ""}><div class="v">${k.v}</div><div class="l">${esc(k.l)}</div><div class="c">${esc(k.c)}</div></button>`).join("");
+  const commits = (d.recent || []).map((c) => `
+    <div class="pulsecommit"><div class="grow">
+      <span class="hash">${esc(c.hash)}</span> · <span class="meta">${esc(c.date)}</span> · ${esc(c.subject)}
+      <div class="files">${(c.files || []).map((f) => `<button class="f" type="button" data-act="doc" data-doc="${esc(f)}">${esc(f.replace(/^docs\//, ""))}</button>`).join("")}${c.count > (c.files || []).length ? `<span class="meta">+${c.count - c.files.length}</span>` : ""}</div>
+    </div></div>`).join("");
+  const broken = (d.broken || []).slice(0, 12).map((b) => `
+    <div class="alertrow"><span class="dot bad"></span><span class="grow">${esc(b.fromTitle)} → <span class="mono">${esc(b.target)}</span></span>
+      <button class="linkbtn" type="button" data-act="copy" data-what="Destino" data-copy="${esc(b.target)}">Copiar destino</button>
+      <button class="btn sm" type="button" data-act="doc" data-doc="${esc(b.from)}">Abrir origem</button></div>`).join("");
+  const stale = (d.stale || []).map((s) => `<button class="file" type="button" data-act="doc" data-doc="${esc(s.p)}">
+      <span class="t">${esc(s.t)}</span><span class="d">${s.age} dias · ${esc((S.collections.find((c) => c.id === s.c) || {}).name || s.c)}</span></button>`).join("");
+  return `<div class="row" style="margin-bottom:10px"><span class="meta">${esc(d.repo || "")}</span><span class="spacer"></span>
+      <button class="linkbtn" type="button" data-act="pulse-graph">Abrir grafo</button>
+      <button class="btn sm" type="button" data-act="pulse-refresh">Atualizar</button></div>
+    <div class="kpis">${kpis}</div>
+    <div class="plain-h">Mudanças recentes em docs</div>
+    ${commits || `<p class="meta">Sem commits recentes em <code>docs/</code>.</p>`}
+    <div id="pulse-broken" class="plain-h section-gap">Links quebrados · ${nf.format(st.broken || 0)} no repositório</div>
+    ${broken || `<p class="meta">Nenhum link quebrado.</p>`}
+    <div id="pulse-stale" class="plain-h section-gap">Docs frios · ${nf.format(st.stale || 0)} com 60+ dias</div>
+    ${stale || `<p class="meta">Nenhum doc frio nas coleções vivas.</p>`}
+    <p class="meta section-gap">${nf.format(st.docs || 0)} docs · ${nf.format(st.edges || 0)} ligações · ${nf.format(st.guides || 0)} guides · ${st.atlas || 0} superfícies de atlas.</p>`;
+}
+
 /* ---------------- Graph ---------------- */
 
 async function prepareGraph(scope, path) {
@@ -1327,6 +1387,9 @@ document.addEventListener("click", (e) => {
     else if (target === "changelog") { S.read.coll = "changelog"; S.read.doc = null; S.view = "read"; void openCollection("changelog"); }
     return;
   }
+  if (act === "pulse-refresh") { void preparePulse(); return; }
+  if (act === "pulse-focus") { const el = document.getElementById(t.dataset.target); if (el) el.scrollIntoView({ block: "start" }); return; }
+  if (act === "pulse-graph") { void prepareGraph("hubs", ""); return; }
   if (act === "gscope") { void prepareGraph(t.dataset.s, t.dataset.s === "doc" ? (S.read.doc || "") : ""); return; }
   if (act === "graph-doc") { void prepareGraph("doc", t.dataset.doc); return; }
   if (act === "graph-hubs") { void prepareGraph("hubs", ""); return; }

@@ -118,7 +118,14 @@ export function buildCorpus(repo) {
     walk(docsDir, found);
     rels.push(...found.map((p) => path.relative(abs, p)));
   }
-  for (const rel of ROOT_FILES) {
+  const roots = new Set(ROOT_FILES);
+  try {
+    for (const e of fs.readdirSync(abs, { withFileTypes: true })) {
+      if (!e.isFile() || e.name.startsWith(".")) continue;
+      if (e.name.endsWith(".md") || e.name === "Makefile") roots.add(e.name);
+    }
+  } catch { /* keep the known list */ }
+  for (const rel of roots) {
     if (fs.existsSync(path.join(abs, rel))) rels.push(rel);
   }
   for (const rel of rels) {
@@ -218,19 +225,23 @@ export function linksOf(text, fromPath) {
   return [...out.values()];
 }
 
+export function targetPath(target, fromPath) {
+  if (/^(https?:|mailto:|#)/i.test(target)) return "";
+  const clean = target.split("#")[0].trim();
+  if (!clean) return "";
+  const dir = fromPath.includes("/") ? fromPath.slice(0, fromPath.lastIndexOf("/")) : "";
+  if (clean.startsWith("/")) return clean.slice(1);
+  if (clean.startsWith("./") || clean.startsWith("../")) return normPathLocal(dir + "/" + clean);
+  if (clean.startsWith("docs/") || ROOT_FILES.includes(clean)) return clean;
+  return normPathLocal(dir + "/" + clean);
+}
+
 export function resolveTarget(target, fromPath, fileSet) {
   if (/^(https?:|mailto:|#)/i.test(target)) return null;
-  const clean = target.split("#")[0].trim();
-  if (!clean) return null;
-  if (clean.startsWith("ADR:")) return null; // resolved by the caller
-  const dir = fromPath.includes("/") ? fromPath.slice(0, fromPath.lastIndexOf("/")) : "";
-  let rel;
-  if (clean.startsWith("/")) rel = clean.slice(1);
-  else if (clean.startsWith("./") || clean.startsWith("../")) rel = normPathLocal(dir + "/" + clean);
-  else if (clean.startsWith("docs/") || ROOT_FILES.includes(clean)) rel = clean;
-  else rel = normPathLocal(dir + "/" + clean);
+  if (target.startsWith("ADR:")) return null; // resolved by the caller
+  const rel = targetPath(target, fromPath);
+  if (!rel) return null;
   if (fileSet.has(rel)) return rel;
-  if (clean.startsWith("docs/") && fileSet.has(clean)) return clean;
   return null;
 }
 
@@ -262,7 +273,9 @@ export function buildGraph(corpus) {
         dest = resolveTarget(target, f.p, set);
       }
       if (!dest) {
-        if (kind !== "adr" && /\.md(?::\d+)?$/.test(target) && !/^(https?:|#)/i.test(target)) {
+        const rel = targetPath(target, f.p);
+        const inDocs = rel.startsWith("docs/") || /^[^/]+\.md$/.test(rel);
+        if (kind !== "adr" && inDocs && /\.md(?::\d+)?$/.test(rel)) {
           broken.set(f.p + "->" + target, { from: f.p, target });
         }
         continue;
@@ -398,6 +411,38 @@ export function backlinksOf(graph, path) {
     if (e.s === path) out.push({ p: e.t, t: (graph.nodes.get(e.t) || {}).t || e.t, c: (graph.nodes.get(e.t) || {}).c || "", kind: e.kind, w: e.w });
   }
   return { backlinks: back.sort((a, b) => b.w - a.w), outbound: out.sort((a, b) => b.w - a.w) };
+}
+
+
+/* ---------------- pulse ---------------- */
+
+export function pulseOf(corpus, { now = Date.now(), lastDate = {} } = {}) {
+  const LIVING = new Set(["plans", "architecture", "books", "docsroot"]);
+  const ageOf = (d) => Math.max(0, Math.floor((now - new Date(d + "T00:00:00Z").getTime()) / 86400000));
+  const byPath = new Map(corpus.files.map((f) => [f.p, f]));
+  const living = corpus.files.filter((f) => LIVING.has(f.c)).map((f) => {
+    const seen = lastDate[f.p] || f.d;
+    return { p: f.p, t: f.t, c: f.c, d: seen, age: ageOf(seen) };
+  });
+  const stale = living.filter((f) => f.age >= 60).sort((a, b) => b.age - a.age).slice(0, 12);
+  const broken = corpus.graph.broken.map((b) => ({
+    from: b.from,
+    fromTitle: (byPath.get(b.from) || {}).t || b.from,
+    target: b.target,
+  })).slice(0, 40);
+  const stats = {
+    docs: corpus.stats.docs,
+    collections: corpus.collections.length,
+    edges: corpus.graph.edges.length,
+    orphans: corpus.graph.orphans,
+    broken: corpus.graph.broken.length,
+    stale: living.filter((f) => f.age >= 60).length,
+    fragments: corpus.stats.changelog,
+    books: corpus.stats.books,
+    guides: corpus.stats.guides,
+    atlas: corpus.stats.atlas,
+  };
+  return { stats, stale, broken };
 }
 
 /* ---------------- search ---------------- */
