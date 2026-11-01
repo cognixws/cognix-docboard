@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildCorpus, searchCorpus, catalog, commandPlan, egoGraph, hubGraph, collectionGraph, backlinksOf, pulseOf, changeObligations } from "./lib.mjs";
+import { buildCorpus, searchCorpus, catalog, commandPlan, egoGraph, hubGraph, collectionGraph, backlinksOf, pulseOf, changeObligations, coverageOf } from "./lib.mjs";
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "docboard-test-"));
@@ -19,6 +19,10 @@ function fixture() {
   write("docs/architecture/one.md", "# One subsystem\n\nThe land does not restart. See [the plan](../plans/panel.md), docs/decisions/0001-one.md and ADR-0001.\n\nA [missing doc](../plans/missing.md) is broken.\n");
   write("docs/changelog.d/x.md", "# Fragment\n");
   write("docs/books/runbooks/build.md", "# Build\n\nRun the Makefile target before shipping.\n");
+  write("docs/architecture/widget.md", "# Widget subsystem\n\nThe widget lives in internal/widget/.\n");
+  write("docs/architecture/orphan.md", "# Orphan subsystem\n\nNothing here.\n");
+  write("internal/widget/widget.go", "package widget\n");
+  write("web/browser/src/App.jsx", "export default function App() { return null; }\n");
   write("AGENTS.md", "# Agents\n");
   write("README.md", "# Readme\n");
   write("Makefile", "all:\n\t@true\n");
@@ -144,4 +148,19 @@ test("change obligations read the diff against the ADR-0086 table", () => {
   assert.equal(obs.find((o) => o.kind === "changelog").status, "todo");
   const found = changeObligations([{ path: "web/browser/src/App.jsx", status: "M" }], c, { branch: "feat/x" });
   assert.equal(found.find((o) => o.kind === "changelog").status, "note");
+});
+
+test("coverage maps code areas to architecture docs and finds orphans", () => {
+  const repo = fixture();
+  const c = buildCorpus(repo);
+  const cov = coverageOf(repo, c, { lastDate: {} });
+  const widget = cov.areas.find((a) => a.id === "internal/widget");
+  assert.ok(widget && widget.covered);
+  assert.ok(widget.docs.some((d) => d.path === "docs/architecture/widget.md" && d.exact));
+  const browser = cov.areas.find((a) => a.id === "web/browser");
+  assert.ok(browser && !browser.covered);
+  assert.ok(cov.missing.some((a) => a.id === "web/browser"));
+  assert.ok(cov.orphans.some((o) => o.path === "docs/architecture/orphan.md"));
+  assert.ok(!cov.orphans.some((o) => o.path === "docs/architecture/widget.md"));
+  assert.equal(cov.stats.missing, cov.missing.length);
 });

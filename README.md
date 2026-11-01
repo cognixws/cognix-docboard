@@ -32,6 +32,14 @@ The index is built in memory by the extension's own process and refreshed on
 demand or after five minutes. No database, no backup promise: the repository
 is the source of truth.
 
+## Coverage
+
+Which code area has an architecture doc, and which does not: `internal/*`
+packages, `web/*`, `desktop-shell`, `cmd/*` and `packages/*` are mapped to
+`docs/architecture/` by exact name, a path mention or a title mention. It
+lists uncovered areas, architecture docs no area cites, and docs untouched
+for 60+ days. A heuristic map: it opens and copies paths, never writes.
+
 ## Pulse
 
 A health view of the docs: broken links, documents with no link, living docs

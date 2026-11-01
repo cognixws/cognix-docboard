@@ -51,6 +51,7 @@ const S = {
   graph: { scope: "hubs", path: "", data: null, loading: false, error: "" },
   pulse: { data: null, loading: false, error: "" },
   change: { worktrees: null, wt: "", data: null, loading: false, error: "" },
+  coverage: { data: null, loading: false, error: "" },
   dialog: null,
 };
 
@@ -214,7 +215,7 @@ function render() {
           <div class="sk" style="width:70%"></div><div class="sk" style="width:92%"></div><div class="sk" style="width:55%"></div></div></div>`;
     return;
   }
-  const map = { read: renderRead, search: renderSearch, open: renderOpen, operar: renderOperar, graph: renderGraph, pulse: renderPulse, change: renderChange, map: renderMap, health: renderHealth };
+  const map = { read: renderRead, search: renderSearch, open: renderOpen, operar: renderOperar, graph: renderGraph, pulse: renderPulse, change: renderChange, coverage: renderCoverage, map: renderMap, health: renderHealth };
   content.innerHTML = (map[S.view] || renderRead)();
   content.scrollTop = S.scroll[keyOf()] || 0;
   S.lastKey = keyOf();
@@ -263,6 +264,9 @@ function syncChrome() {
   } else if (S.view === "pulse") {
     title = "Pulso";
     sub = "o estado das docs agora";
+  } else if (S.view === "coverage") {
+    title = "Cobertura";
+    sub = "áreas de código × docs de arquitetura";
   } else if (S.view === "change") {
     title = "Mudança";
     const d = S.change.data;
@@ -350,7 +354,7 @@ function buildRail() {
   el.innerHTML = item("read", "Read") + item("search", "Search") + item("graph", "Grafo")
     + `<div class="rail-group">Trabalho</div>` + item("change", "Mudança") + item("open", "Aberto", nf.format((S.stats.debts || 0) + (S.stats.questions || 0)))
     + (S.commandsEnabled ? item("operar", "Operar") : "")
-    + `<div class="rail-group">Saúde</div>` + item("map", "Map") + item("pulse", "Pulso") + item("health", "Health")
+    + `<div class="rail-group">Saúde</div>` + item("map", "Map") + item("coverage", "Cobertura") + item("pulse", "Pulso") + item("health", "Health")
     + `<div class="rail-foot">${esc(repo.split("/").filter(Boolean).pop() || repo)}
        <br>${nf.format(S.stats.docs || 0)} arquivos · ${esc(S.overview ? S.overview.version : "")}</div>`;
   el.querySelectorAll("button[data-view]").forEach((b) => b.addEventListener("click", () => {
@@ -362,6 +366,7 @@ function buildRail() {
     if (b.dataset.view === "graph") void prepareGraph(S.read.doc ? "doc" : "hubs", S.read.doc || "");
     if (b.dataset.view === "pulse") void preparePulse();
     if (b.dataset.view === "change") void prepareChange();
+    if (b.dataset.view === "coverage") void prepareCoverage();
   }));
 }
 
@@ -864,6 +869,70 @@ async function stopRun(id) {
 
 
 
+
+
+/* ---------------- Coverage ---------------- */
+
+async function prepareCoverage() {
+  S.view = "coverage";
+  S.coverage.loading = true;
+  S.coverage.error = "";
+  render();
+  try {
+    S.coverage.data = await call("/coverage");
+  } catch (e) {
+    S.coverage.error = e.message;
+    S.coverage.data = null;
+  }
+  S.coverage.loading = false;
+  render();
+}
+
+function coverageRow(a) {
+  const docs = (a.docs || []).map((d) => `<button class="btn sm" type="button" data-act="doc" data-doc="${esc(d.path)}">${esc(d.title.length > 40 ? d.title.slice(0, 38) + "…" : d.title)}</button>`).join("");
+  const age = a.age == null ? "" : `${a.age} dias`;
+  return `<div class="covarea"><div class="grow"><div class="name">${esc(a.name)} <span class="meta">${esc(a.kind)} · ${nf.format(a.files)} arquivos</span></div></div>
+    <div class="docs">${docs || `<span class="meta">sem doc mapeado</span>`}${a.covered && a.docs.some((d) => !d.exact) ? '<span class="tag owner">revisar</span>' : ""}${a.stale ? '<span class="tag danger">parado</span>' : ""}</div>
+    <span class="meta">${esc(age)}</span></div>`;
+}
+
+function renderCoverage() {
+  const c = S.coverage;
+  if (c.loading) return `<div class="sk" style="width:40%"></div><div class="sk" style="width:75%"></div><div class="sk" style="width:60%"></div>`;
+  if (c.error) return `<div class="empty"><b>Não consegui medir a cobertura.</b><p>${esc(c.error)}</p><button class="btn sm" type="button" data-act="coverage-refresh">Tentar de novo</button></div>`;
+  const d = c.data;
+  if (!d) return `<div class="empty"><b>Sem dados ainda.</b><p>Atualize para mapear as áreas de código.</p><button class="btn sm" type="button" data-act="coverage-refresh">Atualizar</button></div>`;
+  const st = d.stats || {};
+  const kpis = [
+    { v: `${nf.format(st.covered || 0)}/${nf.format(st.areas || 0)}`, l: "áreas com doc de arquitetura", c: "cobertura do mapa", act: "noop" },
+    { v: nf.format(st.missing || 0), l: "áreas descobertas", c: "sem doc mapeado", act: "coverage-focus", target: "cov-missing" },
+    { v: nf.format(st.orphans || 0), l: "docs de arquitetura órfãos", c: "nenhuma área os cita", act: "coverage-focus", target: "cov-orphans" },
+    { v: nf.format(st.stale || 0), l: "coberturas frias", c: "60+ dias sem commit", act: "coverage-focus", target: "cov-stale" },
+  ].map((k) => k.act === "noop"
+    ? `<div class="kpi"><div class="v">${k.v}</div><div class="l">${esc(k.l)}</div><div class="c">${esc(k.c)}</div></div>`
+    : `<button class="kpi" type="button" data-act="${k.act}" data-target="${k.target}"><div class="v">${k.v}</div><div class="l">${esc(k.l)}</div><div class="c">${esc(k.c)}</div></button>`).join("");
+  const missingAll = [...(d.missing || [])].sort((a, b) => b.files - a.files);
+  const missing = missingAll.slice(0, 16).map((a) => `<div class="covarea"><div class="grow"><div class="name">${esc(a.name)} <span class="meta">${esc(a.kind)} · ${nf.format(a.files)} arquivos</span></div></div>
+    <button class="btn sm" type="button" data-act="copy" data-what="Caminho" data-copy="${esc("docs/architecture/" + a.name + ".md")}">Copiar caminho sugerido</button></div>`).join("");
+  const missingMore = missingAll.length > 16 ? `<p class="meta">+${missingAll.length - 16} áreas menores seguem o mesmo padrão docs/architecture/&lt;área&gt;.md.</p>` : "";
+  const coveredAll = (d.areas || []).filter((a) => a.covered).sort((a, b) => b.files - a.files || a.name.localeCompare(b.name));
+  const areas = coveredAll.slice(0, 30).map(coverageRow).join("");
+  const coveredMore = coveredAll.length > 30 ? `<p class="meta">+${coveredAll.length - 30} áreas cobertas menores; use a busca ou o grafo para chegar ao doc.</p>` : "";
+  const orphans = (d.orphans || []).slice(0, 20).map((o) => `<button class="file" type="button" data-act="doc" data-doc="${esc(o.path)}"><span class="t">${esc(o.title)}</span><span class="d">${esc(o.path)}</span></button>`).join("");
+  const stale = (d.stale || []).map((a) => `<div class="covarea"><div class="grow"><div class="name">${esc(a.name)} <span class="meta">${esc(a.kind)} · ${a.age} dias</span></div></div>
+    ${(a.docs || []).map((x) => `<button class="btn sm" type="button" data-act="doc" data-doc="${esc(x.path)}">${esc(x.title.length > 34 ? x.title.slice(0, 32) + "…" : x.title)}</button>`).join("")}</div>`).join("");
+  return `<div class="row" style="margin-bottom:10px"><span class="meta">${esc(d.repo || "")}</span><span class="spacer"></span><button class="btn sm" type="button" data-act="coverage-refresh">Atualizar</button></div>
+    <div class="kpis">${kpis}</div>
+    <div id="cov-missing" class="plain-h">Descobertas · ${nf.format(st.missing || 0)}</div>
+    ${missing || `<p class="meta">Todas as áreas têm um doc mapeado.</p>`}${missingMore}
+    <div class="plain-h section-gap">Cobertura por área</div>
+    ${areas || `<p class="meta">Nenhuma área coberta.</p>`}${coveredMore}
+    <div id="cov-orphans" class="plain-h section-gap">Docs órfãos · ${nf.format(st.orphans || 0)}</div>
+    ${orphans || `<p class="meta">Nenhum doc de arquitetura órfão.</p>`}
+    <div id="cov-stale" class="plain-h section-gap">Frios · ${nf.format(st.stale || 0)}</div>
+    ${stale || `<p class="meta">Nenhuma cobertura com 60+ dias.</p>`}
+    <p class="meta section-gap">Cobertura é um mapa heurístico: o selo “revisar” marca o doc que cita a área, não uma garantia. A extensão não escreve docs.</p>`;
+}
 
 /* ---------------- Change ---------------- */
 
@@ -1476,6 +1545,8 @@ document.addEventListener("click", (e) => {
     else if (target === "changelog") { S.read.coll = "changelog"; S.read.doc = null; S.view = "read"; void openCollection("changelog"); }
     return;
   }
+  if (act === "coverage-refresh") { void prepareCoverage(); return; }
+  if (act === "coverage-focus") { const el = document.getElementById(t.dataset.target); if (el) el.scrollIntoView({ block: "start" }); return; }
   if (act === "open-change") { void prepareChange(); return; }
   if (act === "change-refresh") {
     if (S.change.wt) void loadChange(S.change.wt);

@@ -635,6 +635,96 @@ export function changeObligations(changed, corpus, opts = {}) {
   return [...out.values()].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind));
 }
 
+
+/* ---------------- coverage ---------------- */
+
+const CODE_EXT = new Set([".go", ".js", ".jsx", ".ts", ".tsx", ".rs", ".mjs", ".cjs"]);
+
+function dirsOf(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "testdata" && e.name !== "node_modules")
+      .map((e) => e.name)
+      .sort();
+  } catch { return []; }
+}
+
+function countCode(dir) {
+  let n = 0;
+  const walk = (d) => {
+    let entries;
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.name.startsWith(".") || e.name === "node_modules" || e.name === "testdata") continue;
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) { walk(p); continue; }
+      if (e.name.endsWith("_test.go") || e.name.endsWith(".test.js") || e.name.endsWith(".test.mjs")) continue;
+      if (CODE_EXT.has(path.extname(e.name))) n += 1;
+    }
+  };
+  walk(dir);
+  return n;
+}
+
+function wordRe(name) {
+  return new RegExp("(^|[^a-z0-9])" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "([^a-z0-9]|$)", "i");
+}
+
+export function coverageOf(repo, corpus, { lastDate = {}, now = Date.now() } = {}) {
+  const areas = [];
+  const add = (id, name, kind, rel) => {
+    const files = countCode(path.join(repo, rel));
+    if (files > 0) areas.push({ id, name, kind, path: rel, files });
+  };
+  for (const d of dirsOf(path.join(repo, "internal"))) {
+    if (d === "web") continue; // the embedded UI build, not a subsystem
+    add("internal/" + d, d, "internal", "internal/" + d);
+  }
+  for (const d of dirsOf(path.join(repo, "cmd"))) add("cmd/" + d, d, "cmd", "cmd/" + d);
+  for (const d of ["web/browser", "web/mobile", "web/shared", "web/desktop"]) add(d, d.split("/")[1], "web", d);
+  add("desktop-shell", "desktop-shell", "desktop", "desktop-shell");
+  for (const d of dirsOf(path.join(repo, "packages"))) add("packages/" + d, d, "package", "packages/" + d);
+
+  const arch = corpus.files.filter((f) => f.c === "architecture");
+  const mapped = new Set();
+  for (const a of areas) {
+    const exact = arch.find((f) => f.p === `docs/architecture/${a.name}.md`);
+    let docs = [];
+    if (exact) docs = [{ path: exact.p, title: exact.t, exact: true }];
+    else {
+      const prefix = a.path + "/";
+      const byPrefix = arch.filter((f) => (corpus.text.get(f.p) || "").includes(prefix)).slice(0, 2);
+      const byTitle = arch.filter((f) => wordRe(a.name).test(f.t)).slice(0, 2);
+      docs = (byPrefix.length ? byPrefix : byTitle).map((f) => ({ path: f.p, title: f.t, exact: false }));
+    }
+    a.docs = docs;
+    a.covered = docs.length > 0;
+    for (const d of docs) mapped.add(d.path);
+    const dates = docs.map((d) => lastDate[d.path]).filter(Boolean).sort();
+    a.last = dates.length ? dates[dates.length - 1] : "";
+    a.age = a.last ? Math.max(0, Math.floor((now - new Date(a.last + "T00:00:00Z").getTime()) / 86400000)) : null;
+    a.stale = a.covered && a.age !== null && a.age >= 60;
+  }
+  const orphans = arch
+    .filter((f) => f.p !== "docs/architecture.md" && !mapped.has(f.p))
+    .map((f) => ({ path: f.p, title: f.t, last: lastDate[f.p] || "" }));
+  const missing = areas.filter((a) => !a.covered);
+  const stale = areas.filter((a) => a.stale);
+  return {
+    areas,
+    missing,
+    orphans,
+    stale,
+    stats: {
+      areas: areas.length,
+      covered: areas.length - missing.length,
+      missing: missing.length,
+      orphans: orphans.length,
+      stale: stale.length,
+    },
+  };
+}
+
 /* ---------------- search ---------------- */
 
 const STOP = new Set(["por", "que", "o", "a", "os", "as", "de", "do", "da", "dos", "das", "um", "uma", "e", "é", "em", "no", "na", "não", "se", "para", "com", "como", "quando", "the", "of", "to", "and", "in", "is", "on", "for", "with", "an"]);
