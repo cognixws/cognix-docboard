@@ -445,6 +445,196 @@ export function pulseOf(corpus, { now = Date.now(), lastDate = {} } = {}) {
   return { stats, stale, broken };
 }
 
+
+/* ---------------- change (ADR-0086 checklist) ---------------- */
+
+export function changeObligations(changed, corpus, opts = {}) {
+  const list = (Array.isArray(changed) ? changed : []).map((c) => (typeof c === "string" ? { path: c, status: "M" } : c));
+  const paths = list.map((c) => c.path);
+  const doc = (p) => corpus.text.has(p);
+  const target = (p, label) => ({ path: p, label: label || p, doc: doc(p) });
+  const out = new Map();
+  const add = (id, o) => {
+    const cur = out.get(id);
+    if (cur) {
+      cur.evidence = [...new Set([...cur.evidence, ...(o.evidence || [])])];
+      const seen = new Set(cur.targets.map((t) => t.path));
+      for (const t of o.targets || []) if (!seen.has(t.path)) cur.targets.push(t);
+      if (o.status === "todo") cur.status = "todo";
+      if (o.confidence === "high") cur.confidence = "high";
+      return;
+    }
+    out.set(id, { id, evidence: [], targets: [], confidence: "check", status: "todo", action: "", ...o });
+  };
+
+  const code = paths.filter((p) => /^(internal|cmd|web|desktop-shell|packages)\//.test(p));
+  const arch = corpus.files.filter((f) => f.c === "architecture");
+
+  const groups = new Map();
+  for (const p of code) {
+    const m = /^internal\/([^/]+)\//.exec(p);
+    const pkg = m ? m[1] : p.split("/")[0];
+    if (!groups.has(pkg)) groups.set(pkg, []);
+    groups.get(pkg).push(p);
+  }
+  for (const [pkg, files] of groups) {
+    const exact = arch.find((f) => f.p === `docs/architecture/${pkg}.md`);
+    const COMMON = new Set(["agents", "agent", "server", "web", "app", "main", "cli", "tool", "tools", "settings", "index", "run", "test", "tests", "store", "client", "config", "model", "models", "delivery"]);
+    const bases = files.map((p) => path.basename(p).replace(/\.[^.]+$/, "")).filter((b) => b.length >= 7 && !COMMON.has(b.toLowerCase())).map((b) => b.toLowerCase());
+    const scored = arch.map((f) => {
+      const body = (corpus.text.get(f.p) || "").toLowerCase();
+      return { f, score: bases.filter((b) => body.includes(b)).length };
+    }).filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, 2).map((x) => x.f);
+    let cands = exact ? [exact] : scored;
+    if (!cands.length) cands = corpus.files.filter((f) => f.p === "docs/architecture.md");
+    add("arch:" + pkg, {
+      kind: "arch",
+      title: "Arquitetura — " + pkg,
+      why: "O código de " + pkg + " mudou; o arquivo do subsistema acompanha a mudança.",
+      confidence: exact ? "high" : "check",
+      targets: cands.map((f) => target(f.p, f.t)),
+      evidence: files,
+      status: "todo",
+    });
+  }
+
+  const decisions = corpus.files.filter((f) => f.c === "decisions");
+  const mentioned = [];
+  for (const p of code) {
+    const base = path.basename(p).toLowerCase().replace(/\.(go|js|jsx|ts|tsx|rs|sql|md)$/, "");
+    if (base.length < 5) continue;
+    for (const d of decisions) {
+      if ((corpus.text.get(d.p) || "").toLowerCase().includes(base)) { mentioned.push({ d, p }); break; }
+    }
+  }
+  if (mentioned.length) {
+    const uniq = [...new Map(mentioned.map((m) => [m.d.p, m])).values()].slice(0, 4);
+    add("adr:mentions", {
+      kind: "adr",
+      title: "Decisões que citam estes arquivos",
+      why: "Releia as ADRs que já falaram destes arquivos antes de mudar o contrato.",
+      confidence: "check",
+      targets: uniq.map((m) => target(m.d.p, m.d.t)),
+      evidence: [...new Set(uniq.map((m) => m.p))],
+      status: "note",
+    });
+  }
+  const boundary = paths.filter((p) => /\/migrations\/|credential|convarchive|transcript|backup|security/i.test(p));
+  if (boundary.length) {
+    add("adr:boundary", {
+      kind: "adr",
+      title: "ADR para o boundary",
+      why: "Persistência, credencial, transcript ou backup mudou: a decisão pede um registro novo.",
+      confidence: "check",
+      targets: [],
+      evidence: boundary,
+      status: "todo",
+      action: "operar",
+    });
+  }
+
+  const visible = paths.filter((p) => /^(web|internal\/server|desktop-shell|cmd)\//.test(p) && !/_test\./.test(p) && !/\.md$/.test(p));
+  if (visible.length) {
+    const slug = String(opts.branch || "").replace(/^(feat|fix|docs|chore|refactor|test|perf)\//, "").toLowerCase();
+    const frags = corpus.files.filter((f) => f.c === "changelog");
+    const found = slug ? frags.find((f) => path.basename(f.p).toLowerCase().includes(slug)) : null;
+    add("changelog", {
+      kind: "changelog",
+      title: found ? "Fragmento de changelog — confira" : "Fragmento de changelog",
+      why: found ? "Há um fragmento que parece ser deste branch; confira se cobre a mudança." : "A mudança é visível para a pessoa e falta um fragmento em docs/changelog.d/.",
+      confidence: found ? "check" : "high",
+      targets: found ? [target(found.p, "Fragmento")] : [],
+      evidence: visible,
+      status: found ? "note" : "todo",
+      action: found ? "" : "operar",
+    });
+  }
+
+  const ui = paths.filter((p) => /^web\//.test(p));
+  if (ui.length) {
+    add("interface", {
+      kind: "interface",
+      title: "Guide e superfície no atlas",
+      why: "Uma tela, rota ou diálogo mudou: o guide e a foto do atlas acompanham.",
+      confidence: "check",
+      targets: [target("web/shared/domain/guides.js", "guides.js"), target("docs/atlas/surfaces.json", "surfaces.json")],
+      evidence: ui,
+      status: "todo",
+    });
+  }
+
+  const backup = paths.filter((p) => /internal\/backup|internal\/store\/migrations|\/credentials|convarchive|transcript/i.test(p));
+  if (backup.length) {
+    add("backup", {
+      kind: "backup",
+      title: "Inventário e fixture de backup",
+      why: "Um banco, credencial ou arquivo de usuário mudou: o inventário e a recuperação acompanham.",
+      confidence: "high",
+      targets: [target("internal/backup/inventory.json", "inventory.json")],
+      evidence: backup,
+      status: "todo",
+    });
+  }
+
+  const touched = paths.filter((p) => p === "Makefile" || p.startsWith("scripts/"));
+  for (const p of touched) {
+    const base = path.basename(p);
+    const books = corpus.files.filter((f) => f.c === "books" && (corpus.text.get(f.p) || "").includes(base));
+    if (books.length) {
+      add("books:" + base, {
+        kind: "books",
+        title: "Books que citam " + base,
+        why: "O alvo/script mudou; o book e o stamp de execução acompanham.",
+        confidence: "high",
+        targets: books.map((b) => target(b.p, b.t)),
+        evidence: [p],
+        status: "todo",
+      });
+    }
+  }
+  const bookDocs = paths.filter((p) => p.startsWith("docs/books/"));
+  if (bookDocs.length) {
+    add("books:docs", {
+      kind: "books",
+      title: "Catálogo e stamp dos books",
+      why: "Um book mudou: regenerar o catálogo e renovar o stamp da execução.",
+      confidence: "high",
+      targets: corpus.files.filter((f) => f.p === "docs/books/README.md").map((f) => target(f.p, f.t)),
+      evidence: bookDocs,
+      status: "todo",
+    });
+  }
+
+  const docsChanged = paths.filter((p) => p.startsWith("docs/"));
+  if (docsChanged.length) {
+    add("docs", {
+      kind: "docs",
+      title: "docs-check e vale",
+      why: "As docs mudaram: a paridade e a prosa são verificadas.",
+      confidence: "high",
+      targets: [],
+      evidence: docsChanged,
+      status: "todo",
+      action: "operar",
+    });
+  }
+  if (code.length) {
+    add("gates", {
+      kind: "gates",
+      title: "Gates do diff",
+      why: "O código mudou: rodar ci-scoped antes do close.",
+      confidence: "high",
+      targets: [],
+      evidence: code,
+      status: "todo",
+      action: "operar",
+    });
+  }
+
+  const order = ["backup", "adr", "arch", "changelog", "interface", "books", "docs", "gates"];
+  return [...out.values()].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind));
+}
+
 /* ---------------- search ---------------- */
 
 const STOP = new Set(["por", "que", "o", "a", "os", "as", "de", "do", "da", "dos", "das", "um", "uma", "e", "é", "em", "no", "na", "não", "se", "para", "com", "como", "quando", "the", "of", "to", "and", "in", "is", "on", "for", "with", "an"]);

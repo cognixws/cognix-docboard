@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn, execFileSync } from "node:child_process";
-import { buildCorpus, sortedFor, searchCorpus, catalog, findCommand, commandPlan, COLLECTIONS, egoGraph, hubGraph, collectionGraph, pulseOf } from "./lib.mjs";
+import { buildCorpus, sortedFor, searchCorpus, catalog, findCommand, commandPlan, COLLECTIONS, egoGraph, hubGraph, collectionGraph, pulseOf, changeObligations } from "./lib.mjs";
 
 const PORT = Number(process.env.PICODE_EXT_PORT || 8799);
 const EXT_DIR = process.env.PICODE_EXT_DIR || process.cwd();
@@ -118,6 +118,31 @@ function lockHeld() {
   } catch (e) {
     return e.status === 1 ? true : null;
   }
+}
+
+function changedFiles(wt) {
+  const out = new Map();
+  try {
+    const s = git(["status", "--porcelain=v1"], wt, 5000);
+    for (const line of s.split("\n")) {
+      if (!line.trim()) continue;
+      const status = line.slice(0, 2).trim() || "M";
+      let p = line.slice(3).trim();
+      const arrow = p.indexOf(" -> ");
+      if (arrow >= 0) p = p.slice(arrow + 4);
+      out.set(p, status);
+    }
+  } catch { /* no status */ }
+  try {
+    const base = git(["merge-base", "HEAD", "main"], wt, 4000).trim();
+    if (base) {
+      const diff = git(["diff", "--name-only", base + "...HEAD"], wt, 5000);
+      for (const p of diff.split("\n").map((x) => x.trim()).filter(Boolean)) {
+        if (!out.has(p)) out.set(p, "committed");
+      }
+    }
+  } catch { /* no main */ }
+  return [...out.entries()].map(([path, status]) => ({ path, status }));
 }
 
 function docsHistory(limit = 500) {
@@ -361,6 +386,30 @@ const server = http.createServer(async (req, res) => {
 
     if (p === "/open") {
       return json(res, 200, openPage(c, String(q.get("tab") || "all"), q.get("q") || "", q.get("offset"), q.get("limit")));
+    }
+
+    if (p === "/change") {
+      const tree = listWorktrees();
+      const valid = tree.worktrees.map((w) => w.path);
+      const asked = String(q.get("worktree") || "");
+      if (asked && !valid.includes(asked)) return json(res, 400, { error: "escolha um worktree da lista" });
+      const wt = asked || tree.main || repo;
+      let branch = "";
+      try { branch = git(["rev-parse", "--abbrev-ref", "HEAD"], wt, 3000).trim(); } catch { /* detached */ }
+      const changed = changedFiles(wt);
+      const obligations = changeObligations(changed, c, { branch });
+      return json(res, 200, {
+        worktree: wt,
+        branch,
+        main: tree.main,
+        changed,
+        obligations,
+        stats: {
+          files: changed.length,
+          obligations: obligations.length,
+          todo: obligations.filter((o) => o.status === "todo").length,
+        },
+      });
     }
 
     if (p === "/pulse") {

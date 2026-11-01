@@ -50,6 +50,7 @@ const S = {
   health: { gates: [], counts: {}, handoffToday: false, loading: false },
   graph: { scope: "hubs", path: "", data: null, loading: false, error: "" },
   pulse: { data: null, loading: false, error: "" },
+  change: { worktrees: null, wt: "", data: null, loading: false, error: "" },
   dialog: null,
 };
 
@@ -213,7 +214,7 @@ function render() {
           <div class="sk" style="width:70%"></div><div class="sk" style="width:92%"></div><div class="sk" style="width:55%"></div></div></div>`;
     return;
   }
-  const map = { read: renderRead, search: renderSearch, open: renderOpen, operar: renderOperar, graph: renderGraph, pulse: renderPulse, map: renderMap, health: renderHealth };
+  const map = { read: renderRead, search: renderSearch, open: renderOpen, operar: renderOperar, graph: renderGraph, pulse: renderPulse, change: renderChange, map: renderMap, health: renderHealth };
   content.innerHTML = (map[S.view] || renderRead)();
   content.scrollTop = S.scroll[keyOf()] || 0;
   S.lastKey = keyOf();
@@ -262,6 +263,10 @@ function syncChrome() {
   } else if (S.view === "pulse") {
     title = "Pulso";
     sub = "o estado das docs agora";
+  } else if (S.view === "change") {
+    title = "Mudança";
+    const d = S.change.data;
+    sub = d ? `${d.branch || d.worktree} · ${nf.format(d.stats.files)} arquivos · ${nf.format(d.stats.todo)} obrigações` : "o que este diff deve à documentação";
   } else if (S.view === "map") {
     title = "Map";
     sub = "saúde das coleções";
@@ -272,7 +277,7 @@ function syncChrome() {
   if (elTitle) elTitle.textContent = title;
   if (elSub) elSub.textContent = sub;
   const actions = $("#tb-actions");
-  if (actions) actions.innerHTML = "";
+  if (actions) actions.innerHTML = S.view === "read" ? `<button class="btn" type="button" data-act="open-change">Para esta mudança</button>` : "";
   const input = $("#global-search");
   if (input) {
     input.placeholder = `Buscar em ${nf.format(S.stats.docs || 0)} docs…`;
@@ -343,7 +348,7 @@ function buildRail() {
   if (!el) return;
   const repo = S.overview ? S.overview.repo : "";
   el.innerHTML = item("read", "Read") + item("search", "Search") + item("graph", "Grafo")
-    + `<div class="rail-group">Trabalho</div>` + item("open", "Aberto", nf.format((S.stats.debts || 0) + (S.stats.questions || 0)))
+    + `<div class="rail-group">Trabalho</div>` + item("change", "Mudança") + item("open", "Aberto", nf.format((S.stats.debts || 0) + (S.stats.questions || 0)))
     + (S.commandsEnabled ? item("operar", "Operar") : "")
     + `<div class="rail-group">Saúde</div>` + item("map", "Map") + item("pulse", "Pulso") + item("health", "Health")
     + `<div class="rail-foot">${esc(repo.split("/").filter(Boolean).pop() || repo)}
@@ -356,6 +361,7 @@ function buildRail() {
     if (b.dataset.view === "health") void loadHealth();
     if (b.dataset.view === "graph") void prepareGraph(S.read.doc ? "doc" : "hubs", S.read.doc || "");
     if (b.dataset.view === "pulse") void preparePulse();
+    if (b.dataset.view === "change") void prepareChange();
   }));
 }
 
@@ -857,6 +863,89 @@ async function stopRun(id) {
 }
 
 
+
+
+/* ---------------- Change ---------------- */
+
+async function prepareChange() {
+  S.view = "change";
+  S.change.loading = true;
+  S.change.error = "";
+  render();
+  try {
+    if (!S.change.worktrees) S.change.worktrees = await call("/worktrees");
+    if (!S.change.wt) {
+      const list = S.change.worktrees.worktrees || [];
+      const pick = list.find((w) => !w.main && w.dirty > 0) || list.find((w) => w.main) || list[0];
+      S.change.wt = pick ? pick.path : "";
+    }
+    if (!S.change.wt) throw new Error("nenhum worktree encontrado");
+    S.change.data = await call("/change?worktree=" + encodeURIComponent(S.change.wt));
+  } catch (e) {
+    S.change.error = e.message;
+    S.change.data = null;
+  }
+  S.change.loading = false;
+  render();
+}
+
+async function loadChange(wt) {
+  S.change.wt = wt;
+  S.change.loading = true;
+  S.change.error = "";
+  render();
+  try {
+    S.change.data = await call("/change?worktree=" + encodeURIComponent(wt));
+  } catch (e) {
+    S.change.error = e.message;
+    S.change.data = null;
+  }
+  S.change.loading = false;
+  render();
+}
+
+function changeTarget(pathVal, label) {
+  const isDoc = pathVal.startsWith("docs/") || /^[^/]+\.md$/.test(pathVal);
+  return isDoc
+    ? `<button class="btn sm" type="button" data-act="doc" data-doc="${esc(pathVal)}">${esc(label || pathVal)}</button>`
+    : `<button class="btn sm" type="button" data-act="copy" data-what="Caminho" data-copy="${esc(pathVal)}">Copiar ${esc(label || pathVal)}</button>`;
+}
+
+const CHANGE_GROUPS = [["backup", "Backup"], ["adr", "Decisões"], ["arch", "Arquitetura"], ["changelog", "Changelog"], ["interface", "Interface"], ["books", "Books"], ["docs", "Docs"], ["gates", "Gates"]];
+
+function renderChange() {
+  const ch = S.change;
+  const trees = (ch.worktrees && ch.worktrees.worktrees) || [];
+  const select = trees.length
+    ? `<select id="change-wt" class="field" aria-label="Worktree">${trees.map((w) => `<option value="${esc(w.path)}" ${w.path === ch.wt ? "selected" : ""}>${esc(w.branch)}${w.main ? " (root)" : ""} · ${w.dirty < 0 ? "?" : w.dirty} alterações</option>`).join("")}</select>`
+    : `<p class="meta">Nenhum worktree encontrado.</p>`;
+  const head = `<div class="row" style="align-items:center;margin-bottom:10px">${select}<span class="meta">${esc(ch.worktrees ? ch.worktrees.main : "")}</span><span class="spacer"></span><button class="btn sm" type="button" data-act="change-refresh">Atualizar</button></div>`;
+  if (ch.loading) return head + `<div class="sk" style="width:50%"></div><div class="sk" style="width:80%"></div><div class="sk" style="width:65%"></div>`;
+  if (ch.error) return head + `<div class="empty"><b>Não consegui ler o diff.</b><p>${esc(ch.error)}</p><button class="btn sm" type="button" data-act="change-refresh">Tentar de novo</button></div>`;
+  const d = ch.data;
+  if (!d) return head + `<div class="empty"><b>Sem diff ainda.</b><p>Atualize para ler o worktree escolhido.</p><button class="btn sm" type="button" data-act="change-refresh">Atualizar</button></div>`;
+  if (!d.changed.length) {
+    return head + `<div class="empty"><b>Nenhuma mudança neste worktree.</b><p>Escolha outro worktree acima ou volte quando houver um diff.</p><button class="btn sm" type="button" data-act="change-refresh">Atualizar</button></div>`;
+  }
+  const files = d.changed.slice(0, 12).map((c) => `<button class="f" type="button" data-act="${c.path.startsWith("docs/") || /^[^/]+\.md$/.test(c.path) ? "doc" : "copy"}" ${c.path.startsWith("docs/") || /^[^/]+\.md$/.test(c.path) ? `data-doc="${esc(c.path)}"` : `data-what="Caminho" data-copy="${esc(c.path)}"`}>${esc(c.path.replace(/^docs\//, ""))}</button>`).join("");
+  const groups = CHANGE_GROUPS.map(([kind, label]) => {
+    const obs = d.obligations.filter((o) => o.kind === kind);
+    if (!obs.length) return "";
+    const rows = obs.map((o) => `
+      <div class="obligation"><div class="head">
+        <div class="grow"><div class="ttl">${esc(o.title)} ${o.status === "note" ? '<span class="tag">conferir</span>' : o.confidence === "check" ? '<span class="tag owner">revisar</span>' : ""}</div>
+          <div class="why">${esc(o.why)}</div>
+          <div class="ev">${esc((o.evidence || []).slice(0, 3).join(" · "))}${(o.evidence || []).length > 3 ? " · +" + (o.evidence.length - 3) : ""}</div></div>
+      </div>
+      <div class="acts">${(o.targets || []).map((t) => changeTarget(t.path, t.label)).join("")}${o.action === "operar" ? `<button class="btn sm" type="button" data-act="view" data-view="operar">Abrir Operar</button>` : ""}</div></div>`).join("");
+    return `<div class="cmdgroup">${esc(label)}</div>${rows}`;
+  }).join("");
+  return `${head}
+    <div class="row" style="margin-bottom:8px"><span class="tag">${esc(d.branch || "detached")}</span><span class="meta">${nf.format(d.stats.files)} arquivos · ${nf.format(d.stats.todo)} obrigações abertas</span></div>
+    <div class="pulsecommit" style="border-bottom:0"><div class="grow"><span class="meta">Arquivos alterados</span><div class="files">${files}${d.changed.length > 12 ? `<span class="meta">+${d.changed.length - 12}</span>` : ""}</div></div></div>
+    ${groups || `<p class="meta">Nenhuma obrigação de documentação detectada para este diff.</p>`}
+    <p class="meta section-gap">“Revisar” é a heurística avisando; o gate continua sendo o dono do veredicto.</p>`;
+}
 
 /* ---------------- Pulse ---------------- */
 
@@ -1387,6 +1476,21 @@ document.addEventListener("click", (e) => {
     else if (target === "changelog") { S.read.coll = "changelog"; S.read.doc = null; S.view = "read"; void openCollection("changelog"); }
     return;
   }
+  if (act === "open-change") { void prepareChange(); return; }
+  if (act === "change-refresh") {
+    if (S.change.wt) void loadChange(S.change.wt);
+    else void prepareChange();
+    return;
+  }
+  if (act === "view") {
+    const v = t.dataset.view;
+    setView(v);
+    if (v === "operar") void loadCommands();
+    if (v === "pulse") void preparePulse();
+    if (v === "change") void prepareChange();
+    if (v === "health") void loadHealth();
+    return;
+  }
   if (act === "pulse-refresh") { void preparePulse(); return; }
   if (act === "pulse-focus") { const el = document.getElementById(t.dataset.target); if (el) el.scrollIntoView({ block: "start" }); return; }
   if (act === "pulse-graph") { void prepareGraph("hubs", ""); return; }
@@ -1398,6 +1502,10 @@ document.addEventListener("click", (e) => {
   if (act === "dlg-cancel") { closeDialog(); return; }
   if (act === "dlg-confirm") { void confirmDialog(); return; }
   if (act === "wt-pick") { if (S.dialog) S.dialog.sel = t.value; return; }
+});
+
+document.addEventListener("change", (e) => {
+  if (e.target.id === "change-wt") void loadChange(e.target.value);
 });
 
 document.addEventListener("input", (e) => {

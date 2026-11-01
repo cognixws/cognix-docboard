@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildCorpus, searchCorpus, catalog, commandPlan, egoGraph, hubGraph, collectionGraph, backlinksOf, pulseOf } from "./lib.mjs";
+import { buildCorpus, searchCorpus, catalog, commandPlan, egoGraph, hubGraph, collectionGraph, backlinksOf, pulseOf, changeObligations } from "./lib.mjs";
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "docboard-test-"));
@@ -18,6 +18,7 @@ function fixture() {
   write("docs/handoff/2026-01-01-a.md", "# A session\n");
   write("docs/architecture/one.md", "# One subsystem\n\nThe land does not restart. See [the plan](../plans/panel.md), docs/decisions/0001-one.md and ADR-0001.\n\nA [missing doc](../plans/missing.md) is broken.\n");
   write("docs/changelog.d/x.md", "# Fragment\n");
+  write("docs/books/runbooks/build.md", "# Build\n\nRun the Makefile target before shipping.\n");
   write("AGENTS.md", "# Agents\n");
   write("README.md", "# Readme\n");
   write("Makefile", "all:\n\t@true\n");
@@ -127,4 +128,20 @@ test("pulse reports stale living docs and broken links", () => {
   assert.ok(p.broken.some((b) => b.target.includes("missing.md")));
   assert.ok(p.stale.some((s) => s.p === "docs/plans/panel.md" && s.age >= 120));
   assert.equal(p.stats.fragments, 1);
+});
+
+test("change obligations read the diff against the ADR-0086 table", () => {
+  const c = buildCorpus(fixture());
+  const obs = changeObligations([
+    { path: "internal/store/migrations/001_x.sql", status: "M" },
+    { path: "web/browser/src/App.jsx", status: "M" },
+    { path: "Makefile", status: "M" },
+    { path: "docs/plans/panel.md", status: "M" },
+  ], c, { branch: "feat/docs-board" });
+  const kinds = new Set(obs.map((o) => o.kind));
+  for (const k of ["backup", "adr", "arch", "changelog", "interface", "books", "docs", "gates"]) assert.ok(kinds.has(k), k);
+  assert.ok(obs.find((o) => o.kind === "books").targets.some((t) => t.path === "docs/books/runbooks/build.md"));
+  assert.equal(obs.find((o) => o.kind === "changelog").status, "todo");
+  const found = changeObligations([{ path: "web/browser/src/App.jsx", status: "M" }], c, { branch: "feat/x" });
+  assert.equal(found.find((o) => o.kind === "changelog").status, "note");
 });
