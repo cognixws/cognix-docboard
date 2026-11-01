@@ -97,6 +97,7 @@ const S = {
   health: { data: null, loading: false, error: "", allRunning: false },
   graph: { scope: "hubs", path: "", from: "", to: "", data: null, docs: null, docsLoading: false, pathError: "", loading: false, error: "" },
   pulse: { data: null, loading: false, error: "" },
+  visit: { data: null, marker: null, loading: false, error: "" },
   change: { worktrees: null, wt: "", data: null, loading: false, error: "" },
   coverage: { data: null, loading: false, error: "" },
   queue: { items: [], selected: new Set(), loading: false, error: "", worktree: "", branch: "" },
@@ -1331,6 +1332,89 @@ function renderChange() {
     <p class="meta section-gap">“Revisar” é a heurística avisando; o gate continua sendo o dono do veredicto.</p>`;
 }
 
+
+async function loadVisit() {
+  S.visit.loading = true;
+  if (S.view === "pulse") render();
+  try {
+    let marker = null;
+    try {
+      if (typeof picode !== "undefined") {
+        const st = await picode.use("state");
+        if (st) {
+          const r = await st.get("lastVisit");
+          let v = r && r.value !== undefined ? r.value : r;
+          if (typeof v === "string") v = JSON.parse(v);
+          marker = v || null;
+        }
+      }
+    } catch { /* no state */ }
+    S.visit.marker = marker;
+    S.visit.data = await call("/since?base=" + encodeURIComponent((marker && marker.head) || "") + "&at=" + encodeURIComponent((marker && marker.at) || ""));
+    S.visit.error = "";
+  } catch (e) {
+    S.visit.error = e.message;
+  }
+  S.visit.loading = false;
+  if (S.view === "pulse") render();
+}
+
+async function markVisit() {
+  const d = S.visit.data;
+  if (!d) return;
+  try {
+    if (typeof picode === "undefined") throw new Error("O host não oferece state.");
+    const st = await picode.use("state");
+    if (!st) throw new Error("O host não oferece state.");
+    await st.set("lastVisit", { head: d.head, at: new Date().toISOString(), counts: d.counts });
+    toast("Visita marcada.");
+    void loadVisit();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+function renderVisit() {
+  const v = S.visit;
+  const head = `<div class="plain-h">Desde a última visita</div>`;
+  if (v.loading) return head + `<div class="sk" style="width:52%"></div><div class="sk" style="width:74%"></div>`;
+  if (v.error) return head + `<div class="row"><span class="meta">${esc(v.error)}</span><button class="linkbtn" type="button" data-act="visit-retry">Tentar de novo</button></div>`;
+  const d = v.data;
+  if (!d) return "";
+  if (d.first) {
+    return head + `<div class="empty" style="padding:12px"><b>Primeira visita.</b><p>${nf.format(d.counts.debts)} pendências e ${nf.format(d.counts.questions)} questões agora. Marque para acompanhar só o que chegar depois.</p><button class="btn sm" type="button" data-act="visit-mark">Marcar como visto</button></div>`;
+  }
+  const m = v.marker || {};
+  const before = m.counts || {};
+  const deltaQ = (d.counts.questions || 0) - (before.questions || 0);
+  const deltaD = (d.counts.debts || 0) - (before.debts || 0);
+  const at = m.at ? new Date(m.at).toLocaleString("pt-BR") : "—";
+  const commits = d.commits || [];
+  const changed = d.changed || [];
+  const plans = d.changedPlans || [];
+  const newDebts = d.newDebts || [];
+  const resolved = d.resolvedDebts || [];
+  const nothing = !commits.length && !changed.length && !newDebts.length && !resolved.length;
+  const commitRows = commits.slice(0, 8).map((c) => `<div class="pulsecommit"><div class="grow">
+      <span class="hash">${esc(c.hash)}</span> · <span class="meta">${esc(c.date)}</span> · ${esc(c.subject)}
+      <div class="files">${(c.files || []).map((f) => `<button class="f" type="button" data-act="doc" data-doc="${esc(f)}">${esc(f.replace(/^docs\//, ""))}</button>`).join("")}${c.count > (c.files || []).length ? `<span class="meta">+${c.count - c.files.length}</span>` : ""}</div>
+    </div></div>`).join("");
+  const changedRows = changed.slice(0, 12).map((x) => `<button class="file" type="button" data-act="doc" data-doc="${esc(x.p)}"><span class="t">${esc(x.t)}</span><span class="d">${esc(x.p)}</span></button>`).join("");
+  const planRows = plans.slice(0, 8).map((x) => `<button class="file" type="button" data-act="doc" data-doc="${esc(x.p)}"><span class="t">${esc(x.t)}</span><span class="d">${esc(x.p)}</span></button>`).join("");
+  const debtRow = (x, line) => `<div class="openrow"><div class="grow"><div class="txt">${esc(x.text)}</div><div class="meta">${esc(x.where)}</div></div>
+      <button class="btn sm" type="button" data-act="doc" data-doc="${esc("docs/" + (x.where || "").split(":")[0])}" ${line && (x.where || "").includes(":") ? `data-line="${esc((x.where || "").split(":")[1])}"` : ""}>Abrir</button></div>`;
+  return `${head}
+    <div class="row" style="margin-bottom:6px"><span class="meta">desde ${esc(at)} · ${esc((m.head || "").slice(0, 7))}</span><span class="spacer"></span><button class="btn sm" type="button" data-act="visit-mark">Marcar como visto</button></div>
+    ${nothing ? `<div class="empty" style="padding:12px"><b>Nada mudou desde a última visita.</b><p>Nem commits em <code>docs/</code>, nem dívidas novas ou resolvidas.</p></div>` : `
+      <div class="row" style="margin-bottom:6px"><span class="meta">${nf.format(commits.length)} commits · ${nf.format(changed.length)} docs · ${nf.format(newDebts.length)} dívidas novas · ${nf.format(resolved.length)} resolvidas · questões ${nf.format(d.counts.questions)} (${deltaQ >= 0 ? "+" : ""}${deltaQ})${deltaD ? " · pendências " + (deltaD >= 0 ? "+" : "") + deltaD : ""}</span></div>
+      ${commitRows}
+      ${changedRows ? `<div class="cmdgroup">Docs alterados</div>${changedRows}` : ""}
+      ${planRows ? `<div class="cmdgroup">Planos alterados</div>${planRows}` : ""}
+      ${newDebts.length ? `<div class="cmdgroup">Dívidas novas</div>${newDebts.map((x) => debtRow(x, true)).join("")}` : ""}
+      ${resolved.length ? `<div class="cmdgroup">Dívidas resolvidas</div>${resolved.map((x) => debtRow(x, false)).join("")}` : ""}`}
+    <div class="section-gap"></div>`;
+}
+
 /* ---------------- Pulse ---------------- */
 
 async function preparePulse() {
@@ -1346,6 +1430,7 @@ async function preparePulse() {
   }
   S.pulse.loading = false;
   render();
+  void loadVisit();
 }
 
 function renderPulse() {
@@ -1379,6 +1464,7 @@ function renderPulse() {
   return `<div class="row" style="margin-bottom:10px"><span class="meta">${esc(d.repo || "")}</span><span class="spacer"></span>
       <button class="linkbtn" type="button" data-act="pulse-graph">Abrir grafo</button>
       <button class="btn sm" type="button" data-act="pulse-refresh">Atualizar</button></div>
+    ${renderVisit()}
     <div class="kpis">${kpis}</div>
     <div class="plain-h">Mudanças recentes em docs</div>
     ${commits || `<p class="meta">Sem commits recentes em <code>docs/</code>.</p>`}
@@ -2097,6 +2183,8 @@ document.addEventListener("click", (e) => {
     return;
   }
   if (act === "pulse-refresh") { void preparePulse(); return; }
+  if (act === "visit-mark") { void markVisit(); return; }
+  if (act === "visit-retry") { void loadVisit(); return; }
   if (act === "pulse-focus") { const el = document.getElementById(t.dataset.target); if (el) el.scrollIntoView({ block: "start" }); return; }
   if (act === "pulse-graph") { void prepareGraph("hubs", ""); return; }
   if (act === "msg-general") { void openMessage(null); return; }

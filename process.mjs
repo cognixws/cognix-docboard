@@ -518,6 +518,77 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, openPage(c, String(q.get("tab") || "all"), q.get("q") || "", q.get("offset"), q.get("limit")));
     }
 
+    if (p === "/since") {
+      const head = git(["rev-parse", "HEAD"], repo, 3000).trim();
+      let base = String(q.get("base") || "").trim();
+      const at = String(q.get("at") || "").trim();
+      if (base) { try { git(["cat-file", "-e", base + "^{commit}"], repo, 3000); } catch { base = ""; } }
+      const commits = [];
+      const filesFromCommits = new Set();
+      if (base || at) {
+        const args = base
+          ? ["log", "-40", "--date=short", "--pretty=format:@@%h\t%ad\t%s", "--name-only", base + "..HEAD", "--", "docs"]
+          : ["log", "-40", "--date=short", "--since=" + at, "--pretty=format:@@%h\t%ad\t%s", "--name-only", "--", "docs"];
+        let out = "";
+        try { out = git(args, repo, 6000); } catch { /* none */ }
+        let cur = null;
+        for (const line of out.split("\n")) {
+          const m = /^@@([^\t]+)\t([^\t]+)\t(.*)$/.exec(line);
+          if (m) { cur = { hash: m[1], date: m[2], subject: m[3], files: [] }; commits.push(cur); continue; }
+          if (cur && line.trim() && line.startsWith("docs/")) { cur.files.push(line.trim()); filesFromCommits.add(line.trim()); }
+        }
+      }
+      const commitList = commits.filter((c) => c.files.length).slice(0, 20).map((c) => ({ ...c, count: c.files.length, files: c.files.slice(0, 5) }));
+      let changedPaths = [];
+      if (base) {
+        try { changedPaths = git(["diff", "--name-only", base + "..HEAD", "--", "docs"], repo, 6000).split("\n").map((x) => x.trim()).filter(Boolean); } catch { /* none */ }
+      } else {
+        changedPaths = [...filesFromCommits];
+      }
+      const byPath = new Map(c.files.map((f) => [f.p, f]));
+      const changed = [...new Set(changedPaths)].map((p) => {
+        const f = byPath.get(p);
+        return { p, t: f ? f.t : p.split("/").pop(), c: f ? f.c : "" };
+      });
+      const newDebts = [];
+      const resolvedDebts = [];
+      if (base) {
+        for (const p of changed.map((x) => x.p)) {
+          if (!p.startsWith("docs/handoff/open/")) continue;
+          let out = "";
+          try { out = git(["diff", "-U0", base + "..HEAD", "--", p], repo, 4000); } catch { continue; }
+          let line = 0;
+          for (const l of out.split("\n")) {
+            const h = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(l);
+            if (h) { line = Number(h[1]) - 1; continue; }
+            if (l.startsWith("+++") || l.startsWith("---")) continue;
+            if (l.startsWith("+")) {
+              line += 1;
+              const m = /^\+\s*-\s*\[\s\]\s+(.+)$/.exec(l);
+              if (m) newDebts.push({ text: m[1].slice(0, 300), where: p.replace(/^docs\//, "") + ":" + line });
+            } else if (l.startsWith("-")) {
+              const m = /^-\s*-\s*\[\s\]\s+(.+)$/.exec(l);
+              if (m) resolvedDebts.push({ text: m[1].slice(0, 300), where: p.replace(/^docs\//, "") });
+            } else if (!l.startsWith("\\")) {
+              line += 1;
+            }
+          }
+        }
+      }
+      return json(res, 200, {
+        first: !base && !at,
+        head,
+        base,
+        at,
+        commits: commitList,
+        changed,
+        changedPlans: changed.filter((x) => x.p.startsWith("docs/plans/")),
+        newDebts: newDebts.slice(0, 40),
+        resolvedDebts: resolvedDebts.slice(0, 40),
+        counts: { debts: c.stats.debts, questions: c.stats.questions },
+      });
+    }
+
     if (p === "/agents") {
       try {
         const r = await hostGet("/api/ext/v1/agents");

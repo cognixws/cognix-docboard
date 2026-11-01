@@ -32,6 +32,13 @@ The index is built in memory by the extension's own process and refreshed on
 demand or after five minutes. No database, no backup promise: the repository
 is the source of truth.
 
+## Since the last visit
+
+The page keeps a small marker in the host's key-value (the head, the time and
+the open counts). On the Pulse it shows the commits, changed docs, new and
+resolved debts and the plans that changed since then; "Mark as seen" updates
+the marker. Files are never written; the host owns the state.
+
 ## Fix queue
 
 A single view gathers what the extension revealed: broken links with a
