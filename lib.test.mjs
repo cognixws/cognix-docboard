@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildCorpus, searchCorpus, catalog, commandPlan, extractDebts, extractQuestions } from "./lib.mjs";
+import { buildCorpus, searchCorpus, catalog, commandPlan, egoGraph, hubGraph, collectionGraph, backlinksOf } from "./lib.mjs";
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "docboard-test-"));
@@ -13,10 +13,10 @@ function fixture() {
     fs.writeFileSync(p, body);
   };
   write("docs/decisions/0001-one.md", "# ADR-0001: One\n\n## Boundary\n\nProcess.\n");
-  write("docs/plans/panel.md", "# Panel plan\n\n## Open questions (owner)\n\n1. **Which panel**: the dock (recommended) or a pane?\n   It is a link's intent.\n2. A second question?\n\n## Next\n\nText.\n");
+  write("docs/plans/panel.md", "# Panel plan\n\nSee the [subsystem](../architecture/one.md). It follows ADR-0001.\n\n## Open questions (owner)\n\n1. **Which panel**: the dock (recommended) or a pane?\n   It is a link's intent.\n2. A second question?\n\n## Next\n\nText.\n");
   write("docs/handoff/open/topic.md", "# Topic\n\n- [ ] First debt\n  continued here.\n- [x] Done debt\n\n- [ ] Second debt\n");
   write("docs/handoff/2026-01-01-a.md", "# A session\n");
-  write("docs/architecture/one.md", "# One subsystem\n\nThe land does not restart.\n");
+  write("docs/architecture/one.md", "# One subsystem\n\nThe land does not restart. See [the plan](../plans/panel.md), docs/decisions/0001-one.md and ADR-0001.\n\nA [missing doc](../plans/missing.md) is broken.\n");
   write("docs/changelog.d/x.md", "# Fragment\n");
   write("AGENTS.md", "# Agents\n");
   write("README.md", "# Readme\n");
@@ -91,4 +91,28 @@ test("commandPlan validates parameters and chooses the cwd", () => {
   assert.equal(commandPlan("deploy", {}, { ...ctx, main: "/main" }).cwd, "/main");
   assert.match(commandPlan("nope", {}, ctx).error, /catálogo/);
   assert.match(commandPlan("deploy", {}, { ...ctx, hasMakefile: false }).error, /Makefile/);
+});
+
+test("the link graph resolves links, docs paths and ADR references", () => {
+  const c = buildCorpus(fixture());
+  const one = "docs/architecture/one.md";
+  assert.ok(c.graph.edges.some((e) => e.s === one && e.t === "docs/plans/panel.md" && e.kind === "link"));
+  assert.ok(c.graph.edges.some((e) => e.s === one && e.t === "docs/decisions/0001-one.md"));
+  assert.ok(c.graph.edges.some((e) => e.s === "docs/plans/panel.md" && e.t === "docs/decisions/0001-one.md" && e.kind === "adr"));
+  assert.ok(c.graph.broken.some((b) => b.target.includes("missing.md")));
+  assert.equal(c.graph.orphans, c.files.filter((f) => !c.graph.nodes.get(f.p).degree).length);
+});
+
+test("ego, hubs and collection graphs stay inside the index", () => {
+  const c = buildCorpus(fixture());
+  const ego = egoGraph(c.graph, "docs/plans/panel.md", 1);
+  assert.ok(ego.nodes.some((n) => n.id === "docs/architecture/one.md"));
+  assert.ok(ego.nodes.some((n) => n.id === "docs/plans/panel.md" && n.current));
+  const hubs = hubGraph(c.graph, 10);
+  assert.ok(hubs.nodes.length > 0 && hubs.nodes.length <= 90);
+  const cols = collectionGraph(c, c.graph);
+  assert.equal(cols.nodes.length, 9);
+  assert.ok(cols.edges.some((e) => e.s === "architecture" && e.t === "plans"));
+  const back = backlinksOf(c.graph, "docs/decisions/0001-one.md");
+  assert.ok(back.backlinks.length >= 1);
 });

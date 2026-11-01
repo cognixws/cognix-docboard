@@ -182,6 +182,21 @@
   .progress { height: 3px; background: var(--border); border-radius: 2px; margin-top: 6px; overflow: hidden; }
   .progress i { display: block; height: 100%; background: var(--accent); width: 0; }
 
+  .graphwrap { height: clamp(260px, 42vh, 430px); border: 1px solid var(--border); border-radius: 10px; background: var(--bg-base); overflow: hidden; position: relative; }
+  .graphwrap svg { width: 100%; height: 100%; display: block; cursor: grab; }
+  .graphwrap svg:active { cursor: grabbing; }
+  .gedge { stroke: var(--border-strong); stroke-opacity: .8; }
+  .gedge-arrow { fill: var(--border-strong); }
+  .gnode { fill: var(--text-secondary); stroke: var(--bg-base); stroke-width: 1.5; cursor: pointer; }
+  .gnode.current { fill: var(--accent); }
+  .gnode.collection { fill: var(--accent-soft); stroke: var(--accent); }
+  .glabel { fill: var(--text-secondary); font-size: 10.5px; pointer-events: none; }
+  .glabel.current { fill: var(--text-primary); font-weight: 600; }
+  .graphlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 4px; }
+  .graphlist button { display: flex; align-items: baseline; gap: 8px; text-align: left; background: transparent; border: 0; border-radius: 7px; padding: 6px 8px; cursor: pointer; color: var(--text-primary); font-size: 12px; font-family: inherit; min-width: 0; }
+  .graphlist button:hover { background: var(--bg-base); }
+  .graphlist .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .graphlist .d { font-size: 10.5px; color: var(--text-secondary); white-space: nowrap; }
   .openrow { display: flex; align-items: flex-start; gap: 10px; padding: 8px 2px; border-bottom: 1px solid var(--border); }
   .openrow .grow { flex: 1; min-width: 0; }
   .openrow .txt { font-size: 12.8px; font-weight: 600; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -258,6 +273,7 @@
   <div class="dialog" id="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title"></div>
 </div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
+<script src="../_picode/lib/d3.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

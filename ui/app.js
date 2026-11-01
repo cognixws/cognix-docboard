@@ -48,6 +48,7 @@ const S = {
   open: { tab: "all", q: "", offset: 0, questions: [], debts: [], counts: {}, loading: false },
   operar: { groups: [], enabled: false, filter: "", group: "all", runs: [], loading: false, timer: null, worktrees: null },
   health: { gates: [], counts: {}, handoffToday: false, loading: false },
+  graph: { scope: "hubs", path: "", data: null, loading: false, error: "" },
   dialog: null,
 };
 
@@ -211,7 +212,7 @@ function render() {
           <div class="sk" style="width:70%"></div><div class="sk" style="width:92%"></div><div class="sk" style="width:55%"></div></div></div>`;
     return;
   }
-  const map = { read: renderRead, search: renderSearch, open: renderOpen, operar: renderOperar, map: renderMap, health: renderHealth };
+  const map = { read: renderRead, search: renderSearch, open: renderOpen, operar: renderOperar, graph: renderGraph, map: renderMap, health: renderHealth };
   content.innerHTML = (map[S.view] || renderRead)();
   content.scrollTop = S.scroll[keyOf()] || 0;
   S.lastKey = keyOf();
@@ -221,6 +222,7 @@ function render() {
     S.read.line = null;
     requestAnimationFrame(() => jumpToLine(content, line));
   }
+  if (S.view === "graph" && S.graph.data) requestAnimationFrame(drawGraph);
   if (S.focusOpen) {
     S.focusOpen = false;
     const input = $("#open-filter");
@@ -253,6 +255,9 @@ function syncChrome() {
   } else if (S.view === "operar") {
     title = "Operar";
     sub = S.commandsEnabled ? "comandos do Makefile · pessoa apenas" : "comandos desligados";
+  } else if (S.view === "graph") {
+    title = "Grafo";
+    sub = S.graph.path ? "ligações de " + S.graph.path : "ligações entre docs do repositório";
   } else if (S.view === "map") {
     title = "Map";
     sub = "saúde das coleções";
@@ -333,7 +338,7 @@ function buildRail() {
   const el = $("#rail");
   if (!el) return;
   const repo = S.overview ? S.overview.repo : "";
-  el.innerHTML = item("read", "Read") + item("search", "Search")
+  el.innerHTML = item("read", "Read") + item("search", "Search") + item("graph", "Grafo")
     + `<div class="rail-group">Trabalho</div>` + item("open", "Aberto", nf.format((S.stats.debts || 0) + (S.stats.questions || 0)))
     + (S.commandsEnabled ? item("operar", "Operar") : "")
     + `<div class="rail-group">Saúde</div>` + item("map", "Map") + item("health", "Health")
@@ -345,6 +350,7 @@ function buildRail() {
     if (b.dataset.view === "open") void loadOpen(false);
     if (b.dataset.view === "operar") void loadCommands();
     if (b.dataset.view === "health") void loadHealth();
+    if (b.dataset.view === "graph") void prepareGraph(S.read.doc ? "doc" : "hubs", S.read.doc || "");
   }));
 }
 
@@ -427,6 +433,7 @@ function renderRead() {
     <div class="actions">
       <button class="btn sm" type="button" data-act="copy" data-what="Caminho" data-copy="${esc(r.doc)}">Copiar caminho</button>
       <button class="btn sm" type="button" data-act="copy" data-what="Referência" data-copy="${esc(r.doc)}:1">Copiar referência</button>
+      <button class="btn sm" type="button" data-act="graph-doc" data-doc="${esc(r.doc)}">Grafo</button>
     </div>
     ${body}`;
 
@@ -829,6 +836,145 @@ async function stopRun(id) {
   } catch (e) { toast(e.message); }
 }
 
+
+/* ---------------- Graph ---------------- */
+
+async function prepareGraph(scope, path) {
+  const g = S.graph;
+  if (scope) g.scope = scope;
+  if (path !== undefined) g.path = path;
+  if (!g.path && S.read.doc) g.path = S.read.doc;
+  if (g.scope === "doc" && !g.path) g.scope = "hubs";
+  S.view = "graph";
+  g.loading = true;
+  g.error = "";
+  render();
+  try {
+    let url = "/graph?scope=" + encodeURIComponent(g.scope);
+    if (g.scope === "doc") url += "&path=" + encodeURIComponent(g.path) + "&depth=1";
+    if (g.scope === "hubs") url += "&limit=15";
+    g.data = await call(url);
+  } catch (e) {
+    g.error = e.message;
+    g.data = null;
+  }
+  g.loading = false;
+  render();
+}
+
+function renderGraph() {
+  const g = S.graph;
+  const scopes = [["hubs", "Hubs"], ["collections", "Coleções"]];
+  if (S.read.doc) scopes.push(["doc", "Este documento"]);
+  const chips = scopes.map(([id, label]) => `<button type="button" data-act="gscope" data-s="${id}" aria-pressed="${g.scope === id}">${label}</button>`).join("");
+  const head = `<div class="seg" style="margin-bottom:10px">${chips}</div>`;
+  if (g.loading) return head + `<div class="graphwrap"><div class="boot"><div class="box"><p class="meta">Montando o grafo…</p><div class="sk" style="width:60%"></div><div class="sk" style="width:80%"></div></div></div></div>`;
+  if (g.error) return head + `<div class="empty"><b>Não consegui montar o grafo.</b><p>${esc(g.error)}</p><button class="btn sm" type="button" data-act="graph-retry">Tentar de novo</button></div>`;
+  const d = g.data;
+  if (!d) return head + `<div class="empty"><b>Escolha um escopo.</b><p>Hubs mostra os documentos mais ligados; Coleções mostra o fluxo entre as pastas.</p><button class="btn sm" type="button" data-act="gscope" data-s="hubs">Ver hubs</button></div>`;
+  const current = d.focus || "";
+  const nodes = (d.nodes || []).slice().sort((a, b) => (b.degree || 0) - (a.degree || 0));
+  const top = nodes.slice(0, 8).map((n) => {
+    const isColl = d.scope === "collections";
+    return `<button type="button" data-act="${isColl ? "coll" : "doc"}" data-${isColl ? "coll" : "doc"}="${esc(n.id)}">
+      <span class="t">${esc(n.t)}</span><span class="d">${nf.format(n.degree || 0)}${isColl ? "" : " · " + esc((S.collections.find((c) => c.id === n.c) || {}).name || n.c)}</span></button>`;
+  }).join("");
+  const back = (d.backlinks || []).slice(0, 8).map((b) => `<button class="file" type="button" data-act="doc" data-doc="${esc(b.p)}"><span class="t">${esc(b.t)}</span><span class="d">${esc(b.p)}</span></button>`).join("");
+  const out = (d.outbound || []).slice(0, 8).map((b) => `<button class="file" type="button" data-act="doc" data-doc="${esc(b.p)}"><span class="t">${esc(b.t)}</span><span class="d">${esc(b.p)}</span></button>`).join("");
+  const broken = (d.brokenExamples || []).slice(0, 6).map((b) => `<div class="alertrow"><span class="dot bad"></span><span class="grow">${esc(b.from)} → ${esc(b.target)}</span></div>`).join("");
+  const extra = d.scope === "doc"
+    ? `<div class="plain-h section-gap">Referenciado por</div>${back || `<p class="meta">Nenhum documento aponta para este.</p>`}
+       <div class="plain-h section-gap">Aponta para</div>${out || `<p class="meta">Este documento não aponta para outro.</p>`}
+       ${broken ? `<div class="plain-h section-gap">Links quebrados</div>${broken}` : ""}`
+    : "";
+  return `${head}
+    <div class="graphwrap" id="graphwrap"><svg id="graph" role="img" aria-label="Grafo de ligações entre documentos"></svg></div>
+    <p class="meta" style="margin-top:8px">${nf.format((d.nodes || []).length)} nós · ${nf.format((d.edges || []).length)} ligações${d.stats ? " · repositório: " + nf.format(d.stats.orphans) + " órfãos · " + nf.format(d.stats.broken) + " links quebrados" : ""}</p>
+    <div class="plain-h section-gap">Nós principais</div>
+    <div class="graphlist">${top || `<p class="meta">Sem nós neste recorte.</p>`}</div>
+    ${extra}`;
+}
+
+function drawGraph() {
+  if (S.view !== "graph") return;
+  const wrap = $("#graphwrap");
+  const svgEl = $("#graph");
+  const d = S.graph.data;
+  if (!wrap || !svgEl || !d) return;
+  if (typeof d3 === "undefined") {
+    wrap.innerHTML = `<div class="boot"><div class="box"><div class="empty"><b>O D3 não carregou.</b><p>A página usa o D3 que o PiCode serve; recarregue a aba.</p></div></div></div>`;
+    return;
+  }
+  const W = Math.max(280, wrap.clientWidth);
+  const H = Math.max(220, wrap.clientHeight);
+  svgEl.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svgEl.innerHTML = "";
+  const nodes = (d.nodes || []).map((n) => ({ ...n }));
+  const links = (d.edges || []).map((e) => ({ source: e.s, target: e.t, kind: e.kind, w: e.w }));
+  const collections = d.scope === "collections";
+  const svg = d3.select(svgEl);
+  const defs = svg.append("defs");
+  defs.append("marker").attr("id", "garrow").attr("viewBox", "0 -4 8 8").attr("refX", 13).attr("refY", 0)
+    .attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto")
+    .append("path").attr("d", "M0,-4L8,0L0,4").attr("class", "gedge-arrow");
+  const root = svg.append("g");
+  svg.call(d3.zoom().scaleExtent([0.35, 4]).on("zoom", (ev) => root.attr("transform", ev.transform)));
+  const link = root.append("g").selectAll("line").data(links).join("line")
+    .attr("class", "gedge")
+    .attr("stroke-width", (e) => 1 + Math.min(2, Math.log2((e.w || 1) + 1) * 0.6))
+    .attr("stroke-opacity", nodes.length > 40 ? 0.3 : 0.8)
+    .attr("marker-end", "url(#garrow)");
+  const node = root.append("g").selectAll("circle").data(nodes).join("circle")
+    .attr("r", (n) => n.current ? 9 : Math.min(7, 4 + Math.log2((n.degree || 1) + 1)))
+    .attr("class", (n) => "gnode" + (n.current ? " current" : "") + (collections ? " collection" : ""))
+    .on("click", (ev, n) => {
+      ev.stopPropagation();
+      if (collections) void openCollection(n.id);
+      else void openDoc(n.id, null);
+    });
+  node.append("title").text((n) => n.t + "\n" + (n.id || "") + " · " + (n.degree || 0) + " ligações");
+  const labelled = nodes.length <= 18
+    ? nodes
+    : nodes.filter((n) => n.current).concat(
+        nodes.filter((n) => !n.current).sort((a, b) => (b.degree || 0) - (a.degree || 0)).slice(0, 5),
+      );
+    const label = root.append("g").selectAll("text").data(labelled).join("text")
+    .attr("class", (n) => "glabel" + (n.current ? " current" : ""))
+    .text((n) => n.t.length > 34 ? n.t.slice(0, 32) + "…" : n.t);
+  const maxDeg = Math.max(1, ...nodes.map((n) => n.degree || 1));
+  const sim = d3.forceSimulation(nodes)
+    .force("link", d3.forceLink(links).id((n) => n.id).distance(collections ? 128 : d.scope === "hubs" ? 108 : 100).strength(0.38))
+    .force("charge", d3.forceManyBody().strength(collections ? -420 : d.scope === "hubs" ? -300 : -320))
+    .force("center", d3.forceCenter(W / 2, H / 2))
+    .force("collide", d3.forceCollide().radius((n) => (n.current ? 32 : d.scope === "doc" ? 28 : 24)));
+  if (d.scope === "hubs") {
+    sim.force("radial", d3.forceRadial(
+      (n) => 84 + 150 * (1 - Math.min(1, Math.log2((n.degree || 1) + 1) / Math.log2(maxDeg + 1))),
+      W / 2, H / 2,
+    ).strength(0.45));
+  }
+  sim.on("tick", () => {
+      link.attr("x1", (e) => e.source.x).attr("y1", (e) => e.source.y)
+        .attr("x2", (e) => e.target.x).attr("y2", (e) => e.target.y);
+      for (const n of nodes) {
+        n.x = Math.max(16, Math.min(W - 16, n.x));
+        n.y = Math.max(16, Math.min(H - 16, n.y));
+      }
+      node.attr("cx", (n) => n.x).attr("cy", (n) => n.y);
+      label.attr("x", (n) => {
+        const dx = n.x - W / 2, dy = n.y - H / 2, len = Math.hypot(dx, dy) || 1;
+        return n.x + (dx / len) * 18;
+      }).attr("y", (n) => {
+        const dx = n.x - W / 2, dy = n.y - H / 2, len = Math.hypot(dx, dy) || 1;
+        return n.y + (dy / len) * 18 + 3;
+      }).attr("text-anchor", (n) => (n.x >= W / 2 ? "start" : "end"));
+    });
+  node.call(d3.drag()
+    .on("start", (ev, n) => { if (!ev.active) sim.alphaTarget(0.25).restart(); n.fx = n.x; n.fy = n.y; })
+    .on("drag", (ev, n) => { n.fx = ev.x; n.fy = ev.y; })
+    .on("end", (ev, n) => { if (!ev.active) sim.alphaTarget(0); n.fx = null; n.fy = null; }));
+}
+
 /* ---------------- Map ---------------- */
 
 async function refreshIndex() {
@@ -862,6 +1008,8 @@ function renderMap() {
     <div class="plain-h">Alertas</div>
     <div class="alertrow"><span class="dot warn"></span><span class="grow">${nf.format(st.ownerQuestions || 0)} questões precisam de decisão do owner</span>
       <button class="btn sm" type="button" data-act="kpi" data-target="owner">Abrir</button></div>
+    <div class="alertrow"><span class="dot"></span><span class="grow">${S.overview && S.overview.graph ? nf.format(S.overview.graph.edges) + " ligações · " + nf.format(S.overview.graph.broken) + " links quebrados" : "grafo de ligações"}</span>
+      <button class="btn sm" type="button" data-act="graph-hubs">Abrir grafo</button></div>
     <div class="alertrow"><span class="dot"></span><span class="grow">${st.guides || 0} alvos de guide · ${st.atlas || 0} superfícies de atlas</span></div>
     <div class="alertrow"><span class="dot"></span><span class="grow">${nf.format(st.books || 0)} books · ${nf.format(st.notes || 0)} notas de handoff</span></div>`;
 }
@@ -1166,6 +1314,10 @@ document.addEventListener("click", (e) => {
     else if (target === "changelog") { S.read.coll = "changelog"; S.read.doc = null; S.view = "read"; void openCollection("changelog"); }
     return;
   }
+  if (act === "gscope") { void prepareGraph(t.dataset.s, t.dataset.s === "doc" ? (S.read.doc || "") : ""); return; }
+  if (act === "graph-doc") { void prepareGraph("doc", t.dataset.doc); return; }
+  if (act === "graph-hubs") { void prepareGraph("hubs", ""); return; }
+  if (act === "graph-retry") { void prepareGraph(S.graph.scope, S.graph.path); return; }
   if (act === "gate") { void runGate(t.dataset.gate); return; }
   if (act === "dlg-cancel") { closeDialog(); return; }
   if (act === "dlg-confirm") { void confirmDialog(); return; }
@@ -1220,6 +1372,7 @@ function init() {
     }
   });
   $("#overlay").addEventListener("click", (e) => { if (e.target === $("#overlay")) closeDialog(); });
+  window.addEventListener("resize", () => { if (S.view === "graph" && S.graph.data) drawGraph(); });
   void boot();
 }
 

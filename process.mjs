@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn, execFileSync } from "node:child_process";
-import { buildCorpus, sortedFor, searchCorpus, catalog, findCommand, commandPlan, COLLECTIONS } from "./lib.mjs";
+import { buildCorpus, sortedFor, searchCorpus, catalog, findCommand, commandPlan, COLLECTIONS, egoGraph, hubGraph, collectionGraph } from "./lib.mjs";
 
 const PORT = Number(process.env.PICODE_EXT_PORT || 8799);
 const EXT_DIR = process.env.PICODE_EXT_DIR || process.cwd();
@@ -301,6 +301,12 @@ const server = http.createServer(async (req, res) => {
         platform: PLATFORM,
         commandsEnabled: commandsEnabled() && fs.existsSync(path.join(repo, "Makefile")),
         hasMakefile: fs.existsSync(path.join(repo, "Makefile")),
+        graph: {
+          nodes: c.files.length,
+          edges: c.graph.edges.length,
+          orphans: c.graph.orphans,
+          broken: c.graph.broken.length,
+        },
         version: VERSION,
       });
     }
@@ -336,6 +342,32 @@ const server = http.createServer(async (req, res) => {
 
     if (p === "/open") {
       return json(res, 200, openPage(c, String(q.get("tab") || "all"), q.get("q") || "", q.get("offset"), q.get("limit")));
+    }
+
+    if (p === "/graph") {
+      const scope = String(q.get("scope") || "hubs");
+      const stats = {
+        nodes: c.files.length,
+        edges: c.graph.edges.length,
+        orphans: c.graph.orphans,
+        broken: c.graph.broken.length,
+      };
+      if (scope === "doc") {
+        const path = String(q.get("path") || "");
+        const g = egoGraph(c.graph, path, Math.min(3, Math.max(1, Number(q.get("depth")) || 2)));
+        if (!g) return json(res, 404, { error: "esse documento não está no índice" });
+        g.stats = stats;
+        g.brokenExamples = c.graph.broken.filter((b) => b.from === path).slice(0, 12);
+        return json(res, 200, g);
+      }
+      if (scope === "collections") {
+        const g = collectionGraph(c, c.graph);
+        g.stats = stats;
+        return json(res, 200, g);
+      }
+      const g = hubGraph(c.graph, Math.min(40, Math.max(8, Number(q.get("limit")) || 15)));
+      g.stats = stats;
+      return json(res, 200, g);
     }
 
     if (p === "/worktrees") {

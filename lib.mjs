@@ -168,7 +168,7 @@ export function buildCorpus(repo) {
     atlas,
   };
 
-  return {
+  const corpus = {
     repo: abs,
     builtAt: Date.now(),
     files,
@@ -178,6 +178,226 @@ export function buildCorpus(repo) {
     debts,
     collections: COLLECTIONS.map((c) => ({ ...c, n: count(c.id) })),
   };
+  corpus.graph = buildGraph(corpus);
+  return corpus;
+}
+
+
+/* ---------------- link graph ---------------- */
+
+function fileSetOf(files) {
+  return new Set(files.map((f) => f.p));
+}
+
+function adrMapOf(files) {
+  const m = new Map();
+  for (const f of files) {
+    if (f.c !== "decisions") continue;
+    const hit = /(?:^|\/)(\d{3,4})-/.exec(f.p);
+    if (hit) m.set(hit[1].padStart(4, "0"), f.p);
+  }
+  return m;
+}
+
+// linksOf returns the targets a document points at: markdown links, bare
+// docs/ paths and ADR numbers. Code fences and inline code are ignored.
+export function linksOf(text, fromPath) {
+  let t = String(text)
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`]*`/g, " ");
+  const out = new Map();
+  const add = (target, kind) => {
+    const key = kind + "|" + target;
+    if (!out.has(key)) out.set(key, { target, kind });
+  };
+  for (const m of t.matchAll(/(^|[^!])\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
+    add(m[3], "link");
+  }
+  for (const m of t.matchAll(/\bdocs\/[A-Za-z0-9._\/-]+\.md\b/g)) add(m[0], "path");
+  for (const m of t.matchAll(/\bADR[- ]?(\d{3,4})\b/g)) add("ADR:" + m[1].padStart(4, "0"), "adr");
+  return [...out.values()];
+}
+
+export function resolveTarget(target, fromPath, fileSet) {
+  if (/^(https?:|mailto:|#)/i.test(target)) return null;
+  const clean = target.split("#")[0].trim();
+  if (!clean) return null;
+  if (clean.startsWith("ADR:")) return null; // resolved by the caller
+  const dir = fromPath.includes("/") ? fromPath.slice(0, fromPath.lastIndexOf("/")) : "";
+  let rel;
+  if (clean.startsWith("/")) rel = clean.slice(1);
+  else if (clean.startsWith("./") || clean.startsWith("../")) rel = normPathLocal(dir + "/" + clean);
+  else if (clean.startsWith("docs/") || ROOT_FILES.includes(clean)) rel = clean;
+  else rel = normPathLocal(dir + "/" + clean);
+  if (fileSet.has(rel)) return rel;
+  if (clean.startsWith("docs/") && fileSet.has(clean)) return clean;
+  return null;
+}
+
+function normPathLocal(p) {
+  const out = [];
+  for (const s of String(p).split("/")) {
+    if (!s || s === ".") continue;
+    if (s === "..") out.pop();
+    else out.push(s);
+  }
+  return out.join("/");
+}
+
+export function buildGraph(corpus) {
+  const set = fileSetOf(corpus.files);
+  const adrs = adrMapOf(corpus.files);
+  const byPath = new Map(corpus.files.map((f) => [f.p, f]));
+  const edges = new Map();
+  const broken = new Map();
+  for (const f of corpus.files) {
+    const text = corpus.text.get(f.p) || "";
+    for (const { target, kind } of linksOf(text, f.p)) {
+      let dest = null;
+      let k = kind;
+      if (kind === "adr") {
+        const num = target.slice(4);
+        dest = adrs.get(num) || null;
+      } else {
+        dest = resolveTarget(target, f.p, set);
+      }
+      if (!dest) {
+        if (kind !== "adr" && /\.md(?::\d+)?$/.test(target) && !/^(https?:|#)/i.test(target)) {
+          broken.set(f.p + "->" + target, { from: f.p, target });
+        }
+        continue;
+      }
+      if (dest === f.p) continue;
+      const key = f.p + "\u0000" + dest;
+      const prev = edges.get(key);
+      if (prev) {
+        prev.w += 1;
+        if (k === "link") prev.kind = "link";
+        else if (k === "path" && prev.kind === "adr") prev.kind = "path";
+      } else {
+        edges.set(key, { s: f.p, t: dest, kind: k, w: 1 });
+      }
+    }
+  }
+  const list = [...edges.values()];
+  const nodes = new Map(corpus.files.map((f) => [f.p, {
+    id: f.p, p: f.p, t: f.t, c: f.c, in: 0, out: 0, degree: 0,
+  }]));
+  for (const e of list) {
+    const a = nodes.get(e.s), b = nodes.get(e.t);
+    if (a) { a.out += 1; a.degree += 1; }
+    if (b) { b.in += 1; b.degree += 1; }
+  }
+  const hubs = [...nodes.values()].filter((n) => n.degree > 0).sort((a, b) => b.degree - a.degree);
+  const orphans = [...nodes.values()].filter((n) => n.degree === 0).length;
+  return { edges: list, nodes, hubs, broken: [...broken.values()], byPath, adrs, set, orphans };
+}
+
+function publicNode(n, current) {
+  return { id: n.id, t: n.t, c: n.c, in: n.in, out: n.out, degree: n.degree, current: n.id === current };
+}
+
+function inducedEdges(graph, wanted) {
+  return graph.edges.filter((e) => wanted.has(e.s) && wanted.has(e.t)).map((e) => ({ s: e.s, t: e.t, kind: e.kind, w: e.w }));
+}
+
+function adjacency(graph) {
+  const adj = new Map();
+  for (const e of graph.edges) {
+    if (!adj.has(e.s)) adj.set(e.s, []);
+    if (!adj.has(e.t)) adj.set(e.t, []);
+    adj.get(e.s).push({ to: e.t, dir: "out", w: e.w, kind: e.kind });
+    adj.get(e.t).push({ to: e.s, dir: "in", w: e.w, kind: e.kind });
+  }
+  return adj;
+}
+
+export function egoGraph(graph, path, depth = 2, maxNodes = 140) {
+  const start = graph.nodes.get(path);
+  if (!start) return null;
+  const adj = adjacency(graph);
+  const seen = new Set([path]);
+  let frontier = [path];
+  for (let d = 0; d < depth; d++) {
+    const next = [];
+    for (const p of frontier) {
+      for (const link of adj.get(p) || []) {
+        if (seen.has(link.to)) continue;
+        if (seen.size >= maxNodes) break;
+        seen.add(link.to);
+        next.push(link.to);
+      }
+    }
+    frontier = next;
+    if (!frontier.length) break;
+  }
+  const backlinks = [];
+  const outbound = [];
+  for (const e of graph.edges) {
+    if (e.t === path) backlinks.push({ p: e.s, t: (graph.nodes.get(e.s) || {}).t || e.s, c: (graph.nodes.get(e.s) || {}).c || "", kind: e.kind, w: e.w });
+    if (e.s === path) outbound.push({ p: e.t, t: (graph.nodes.get(e.t) || {}).t || e.t, c: (graph.nodes.get(e.t) || {}).c || "", kind: e.kind, w: e.w });
+  }
+  backlinks.sort((a, b) => b.w - a.w);
+  outbound.sort((a, b) => b.w - a.w);
+  return {
+    scope: "doc",
+    focus: path,
+    nodes: [...seen].map((id) => publicNode(graph.nodes.get(id), path)),
+    edges: inducedEdges(graph, seen),
+    backlinks: backlinks.slice(0, 40),
+    outbound: outbound.slice(0, 40),
+  };
+}
+
+export function hubGraph(graph, limit = 15, maxNodes = 35, neighbors = 1) {
+  const seen = new Set();
+  const hubs = graph.hubs.slice(0, limit);
+  for (const h of hubs) seen.add(h.id);
+  const adj = adjacency(graph);
+  for (const h of hubs) {
+    const around = (adj.get(h.id) || []).slice().sort((a, b) => b.w - a.w).slice(0, neighbors);
+    for (const a of around) {
+      if (seen.size >= maxNodes) break;
+      seen.add(a.to);
+    }
+  }
+  return {
+    scope: "hubs",
+    focus: "",
+    nodes: [...seen].map((id) => publicNode(graph.nodes.get(id), "")),
+    edges: inducedEdges(graph, seen),
+  };
+}
+
+export function collectionGraph(corpus, graph) {
+  const pairs = new Map();
+  for (const e of graph.edges) {
+    const a = (graph.byPath.get(e.s) || {}).c;
+    const b = (graph.byPath.get(e.t) || {}).c;
+    if (!a || !b || a === b) continue;
+    const key = a + ">" + b;
+    pairs.set(key, (pairs.get(key) || 0) + e.w);
+  }
+  const nodes = COLLECTIONS.map((c) => ({ id: c.id, t: c.name, c: c.id, degree: 0, in: 0, out: 0, n: (corpus.collections.find((x) => x.id === c.id) || {}).n || 0 }));
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const edges = [...pairs.entries()].map(([key, w]) => {
+    const [s, t] = key.split(">");
+    if (byId.has(s)) byId.get(s).out += w;
+    if (byId.has(t)) byId.get(t).in += w;
+    return { s, t, kind: "link", w };
+  }).sort((a, b) => b.w - a.w);
+  for (const n of nodes) n.degree = n.in + n.out;
+  return { scope: "collections", focus: "", nodes, edges };
+}
+
+export function backlinksOf(graph, path) {
+  const back = [];
+  const out = [];
+  for (const e of graph.edges) {
+    if (e.t === path) back.push({ p: e.s, t: (graph.nodes.get(e.s) || {}).t || e.s, c: (graph.nodes.get(e.s) || {}).c || "", kind: e.kind, w: e.w });
+    if (e.s === path) out.push({ p: e.t, t: (graph.nodes.get(e.t) || {}).t || e.t, c: (graph.nodes.get(e.t) || {}).c || "", kind: e.kind, w: e.w });
+  }
+  return { backlinks: back.sort((a, b) => b.w - a.w), outbound: out.sort((a, b) => b.w - a.w) };
 }
 
 /* ---------------- search ---------------- */
