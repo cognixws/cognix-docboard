@@ -26,9 +26,12 @@ let VERSION = "0.1.0";
 try { VERSION = JSON.parse(fs.readFileSync(path.join(EXT_DIR, "picode-extension.json"), "utf8")).version; } catch { /* keep */ }
 
 let settings = { values: {}, secrets: [] };
+let me = null;
+let toolsCache = null;
+let lastError = "";
+const STARTED = Date.now();
 let repo = "";
 let corpus = null;
-let lastError = "";
 
 /* ---------------- Host API (repo discovery) ---------------- */
 
@@ -57,6 +60,30 @@ function hostGet(p) {
 
 async function loadSettings() {
   try { settings = await hostGet("/api/ext/v1/settings"); } catch { /* defaults */ }
+}
+
+async function loadIdentity() {
+  try { me = await hostGet("/api/ext/v1/me"); } catch { /* unnamed */ }
+}
+
+function toolVersions() {
+  if (toolsCache) return toolsCache;
+  const out = { node: process.version };
+  for (const [name, args] of [["git", ["--version"]], ["make", ["--version"]], ["flock", ["--version"]]]) {
+    try {
+      out[name] = execFileSync(name, args, { encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"] }).trim().split("\n")[0];
+    } catch { out[name] = ""; }
+  }
+  toolsCache = out;
+  return out;
+}
+
+let treesCache = { at: 0, data: null };
+function worktreesCached() {
+  if (Date.now() - treesCache.at < 10000) return treesCache.data;
+  const data = listWorktrees();
+  treesCache = { at: Date.now(), data };
+  return data;
 }
 
 async function resolveRepo() {
@@ -169,6 +196,19 @@ function health(c) {
     const last = [...runs.values()].filter((r) => r.cmd === id).sort((a, b) => b.started - a.started)[0];
     return { id, label: id, status: last ? last.status : "unknown", verdict: last ? (last.verdict || "") : "" };
   });
+  const checkIds = ["docs-check", "vale", "books-check", "hooks-check", "keys-drift", "flakes", "desktop-test"];
+  const checks = checkIds.map((id) => {
+    const cmd = findCommand(id);
+    const last = [...runs.values()].filter((r) => r.cmd === id).sort((a, b) => b.started - a.started)[0];
+    return {
+      id, label: cmd ? cmd.label : id, when: cmd ? cmd.when : "",
+      status: last ? last.status : "idle",
+      verdict: last ? (last.verdict || "") : "",
+      runId: last ? last.id : "",
+      dur: last && last.ended ? Math.round((last.ended - last.started) / 1000) : null,
+    };
+  });
+  const trees = worktreesCached();
   const today = new Date().toISOString().slice(0, 10);
   let handoffToday = false;
   let handoffFile = "";
@@ -178,12 +218,37 @@ function health(c) {
   } catch { /* absent */ }
   return {
     gates,
+    checks,
     handoffToday,
     handoffFile,
     counts: {
       docs: c.stats.docs, debts: c.stats.debts, questions: c.stats.questions,
       ownerQuestions: c.stats.ownerQuestions, changelog: c.stats.changelog,
       guides: c.stats.guides, atlas: c.stats.atlas, books: c.stats.books,
+    },
+    repo: {
+      main: trees.main,
+      worktrees: (trees.worktrees || []).length,
+      dirty: (trees.worktrees || []).filter((w) => w.dirty > 0).length,
+      broken: c.graph.broken.length,
+      orphans: c.graph.orphans,
+      fragments: c.stats.changelog,
+    },
+    env: {
+      platform: PLATFORM,
+      repo,
+      version: VERSION,
+      startedAt: STARTED,
+      uptimeSeconds: Math.round((Date.now() - STARTED) / 1000),
+      indexAgeSeconds: Math.round((Date.now() - c.builtAt) / 1000),
+      tools: toolVersions(),
+      settings: {
+        repo_path: settings?.values?.repo_path || "",
+        allow_commands: settings?.values?.allow_commands !== false,
+      },
+      permissions: (me && me.permissions) || [],
+      workspaces: (me && me.workspaces) || [],
+      dataDir: DATA,
     },
   };
 }
@@ -223,7 +288,7 @@ function startRun(cmd, params) {
   const id = "r" + (++seq) + "-" + Date.now().toString(36);
   const logPath = path.join(DATA, "runs", id + ".log");
   const fd = fs.openSync(logPath, "a");
-  const child = spawn("make", plan.argv, {
+  const child = spawn(plan.command || "make", plan.argv, {
     cwd: plan.cwd,
     env: childEnv(),
     detached: PLATFORM !== "win32",
@@ -532,3 +597,4 @@ server.listen(PORT, "127.0.0.1", () => {
 });
 
 void loadSettings();
+void loadIdentity();

@@ -47,7 +47,7 @@ const S = {
   search: { q: "", f: "all", busy: false, ran: false, files: [], open: [], err: "" },
   open: { tab: "all", q: "", offset: 0, questions: [], debts: [], counts: {}, loading: false },
   operar: { groups: [], enabled: false, filter: "", group: "all", runs: [], loading: false, timer: null, worktrees: null },
-  health: { gates: [], counts: {}, handoffToday: false, loading: false },
+  health: { data: null, loading: false, error: "", allRunning: false },
   graph: { scope: "hubs", path: "", data: null, loading: false, error: "" },
   pulse: { data: null, loading: false, error: "" },
   change: { worktrees: null, wt: "", data: null, loading: false, error: "" },
@@ -280,8 +280,8 @@ function syncChrome() {
     title = "Map";
     sub = "saúde das coleções";
   } else if (S.view === "health") {
-    title = "Health";
-    sub = "gates do branch";
+    title = "Saúde";
+    sub = "diagnóstico do ambiente e checagens";
   }
   if (elTitle) elTitle.textContent = title;
   if (elSub) elSub.textContent = sub;
@@ -359,7 +359,7 @@ function buildRail() {
   el.innerHTML = item("read", "Read") + item("search", "Search") + item("graph", "Grafo")
     + `<div class="rail-group">Trabalho</div>` + item("change", "Mudança") + item("open", "Aberto", nf.format((S.stats.debts || 0) + (S.stats.questions || 0)))
     + (S.commandsEnabled ? item("operar", "Operar") : "")
-    + `<div class="rail-group">Saúde</div>` + item("map", "Map") + item("coverage", "Cobertura") + item("links", "Links") + item("pulse", "Pulso") + item("health", "Health")
+    + `<div class="rail-group">Saúde</div>` + item("map", "Map") + item("coverage", "Cobertura") + item("links", "Links") + item("pulse", "Pulso") + item("health", "Saúde")
     + `<div class="rail-foot">${esc(repo.split("/").filter(Boolean).pop() || repo)}
        <br>${nf.format(S.stats.docs || 0)} arquivos · ${esc(S.overview ? S.overview.version : "")}</div>`;
   el.querySelectorAll("button[data-view]").forEach((b) => b.addEventListener("click", () => {
@@ -767,7 +767,7 @@ function catalogHtml() {
     return `<div class="cmdgroup">${esc(g.group)}</div>` + items.map((c) => {
       const action = c.kind === "service" ? "Gerenciar" : DIALOG_KINDS.has(c.kind) ? "Abrir…" : "Rodar";
       return `<div class="cmd">
-        <div class="grow"><b>${esc(c.label)}</b> <span class="mono meta">make ${esc(c.id)}</span><div class="when">${esc(c.when)}</div></div>
+        <div class="grow"><b>${esc(c.label)}</b> <span class="mono meta">${esc(c.via || "make " + c.id)}</span><div class="when">${esc(c.when)}</div></div>
         <div class="right"><span class="pill">${esc(c.cost)}</span>${tierTag(c.tier)}
           <button class="btn sm" type="button" data-act="cmd" data-cmd="${esc(c.id)}">${action}</button></div>
       </div>`;
@@ -1312,40 +1312,116 @@ function renderMap() {
 
 /* ---------------- Health ---------------- */
 
+function ageText(seconds) {
+  if (seconds == null) return "—";
+  if (seconds < 60) return seconds + " s";
+  if (seconds < 3600) return Math.floor(seconds / 60) + " min";
+  if (seconds < 86400) return Math.floor(seconds / 3600) + " h";
+  return Math.floor(seconds / 86400) + " d";
+}
+
 async function loadHealth() {
   S.health.loading = true;
   try {
-    const r = await call("/health");
-    S.health.gates = r.gates || [];
-    S.health.counts = r.counts || {};
-    S.health.handoffToday = !!r.handoffToday;
-  } catch { /* keep */ }
+    S.health.data = await call("/health");
+    S.health.error = "";
+  } catch (e) {
+    S.health.error = e.message;
+  }
   S.health.loading = false;
   if (S.view === "health") render();
 }
 
-async function runGate(id) {
-  await startCommand(id);
-  if (S.view === "health") { S.health.loading = true; render(); }
+async function runOneCheck(id) {
+  try {
+    const r = await post("/run", { id });
+    if (!r.run) return null;
+    S.operar.runs = [r.run, ...S.operar.runs.filter((x) => x.id !== r.run.id)];
+    renderRuns();
+    startPolling();
+    return r.run;
+  } catch (e) { toast(e.message); return null; }
+}
+
+async function waitRun(id) {
+  for (let i = 0; i < 600; i++) {
+    try {
+      const run = await call("/run?id=" + encodeURIComponent(id));
+      if (run.status !== "running") return run;
+    } catch { return null; }
+    await new Promise((res) => setTimeout(res, 900));
+  }
+  return null;
+}
+
+async function runAllChecks() {
+  const h = S.health;
+  const checks = (h.data && h.data.checks) || [];
+  if (!checks.length || h.allRunning) return;
+  h.allRunning = true;
+  render();
+  for (const c of checks) {
+    const run = await runOneCheck(c.id);
+    if (run) await waitRun(run.id);
+  }
+  h.allRunning = false;
+  await loadHealth();
+  toast("Checagens concluídas.");
+}
+
+function healthCheckRow(c, locked) {
+  const dot = c.status === "ok" ? "ok" : c.status === "failed" ? "bad" : c.status === "running" ? "run" : "";
+  const word = c.status === "ok" ? "ok" : c.status === "failed" ? (c.verdict || "falhou") : c.status === "running" ? "rodando" : "não rodado";
+  const dur = c.dur != null ? " · " + ageText(c.dur) : "";
+  return `<div class="covarea"><span class="dot ${dot}"></span>
+    <div class="grow"><b>${esc(c.label)}</b> <span class="meta">${esc(c.when)}</span><div class="meta">${esc(word)}${dur}</div></div>
+    ${c.runId ? `<button class="linkbtn" type="button" data-act="log" data-run="${esc(c.runId)}">Ver saída</button>` : ""}
+    <button class="btn sm" type="button" data-act="health-check" data-id="${esc(c.id)}" ${locked ? "disabled" : ""}>Rodar</button></div>`;
 }
 
 function renderHealth() {
   const h = S.health;
-  const gates = (h.gates || []).map((g) => {
-    const dot = g.status === "ok" ? "ok" : g.status === "failed" ? "bad" : g.status === "running" ? "run" : "";
-    const word = g.status === "ok" ? "ok" : g.status === "failed" ? (g.verdict || "falhou") : g.status === "running" ? "rodando" : "não verificado";
-    return `<div class="gate"><span class="dot ${dot}"></span>
-      <div class="grow"><div>${esc(g.label)}</div><div class="why">${esc(word)}</div></div>
-      ${g.status === "ok" ? "" : `<button class="btn sm" type="button" data-act="gate" data-gate="${esc(g.id)}">Rodar</button>`}</div>`;
+  if (h.loading && !h.data) return `<div class="sk" style="width:40%"></div><div class="sk" style="width:70%"></div><div class="sk" style="width:55%"></div>`;
+  if (h.error && !h.data) return `<div class="empty"><b>Não consegui ler a saúde.</b><p>${esc(h.error)}</p><button class="btn sm" type="button" data-act="health-refresh">Tentar de novo</button></div>`;
+  const d = h.data;
+  if (!d) return `<div class="empty"><b>Sem dados ainda.</b><p>Atualize para diagnosticar o ambiente.</p><button class="btn sm" type="button" data-act="health-refresh">Atualizar</button></div>`;
+  const env = d.env || {};
+  const tools = env.tools || {};
+  const settings = env.settings || {};
+  const repo = d.repo || {};
+  const counts = d.counts || {};
+  const perms = (env.permissions || []).join(", ") || "—";
+  const rooms = (env.workspaces || []).map((w) => (typeof w === "string" ? w : w.name || w.id || "")).filter(Boolean).join(", ") || "—";
+  const toolRows = ["node", "git", "make", "flock"].map((t) => {
+    const v = tools[t] || "";
+    return `<div class="covarea"><span class="dot ${v ? "ok" : "warn"}"></span><div class="grow"><b>${t}</b> <span class="meta">${v ? esc(v) : "não encontrado"}</span></div></div>`;
   }).join("");
-  const c = h.counts || {};
-  return `<div class="plain-h">Gates do branch</div>
-    ${h.loading && !gates ? `<div class="sk" style="width:50%"></div>` : `<div class="gates">${gates}</div>`}
-    <div class="plain-h section-gap">Documentação</div>
-    <div class="alertrow"><span class="dot ${h.handoffToday ? "ok" : "warn"}"></span><span class="grow">Nota de handoff de hoje ${h.handoffToday ? "existe" : "não encontrada no checkout raiz"}</span></div>
-    <div class="alertrow"><span class="dot"></span><span class="grow">${nf.format(c.changelog || 0)} fragmentos de changelog não dobrados</span></div>
-    <div class="alertrow"><span class="dot"></span><span class="grow">${nf.format(c.debts || 0)} pendências · ${nf.format(c.questions || 0)} questões em aberto</span></div>
-    <p class="meta section-gap">O gate decide; o painel lê. Rodar aqui executa o alvo real do Makefile e deixa o recibo em Operar.</p>`;
+  const repoRows = [
+    { n: repo.broken || 0, label: "links quebrados", view: "links", act: "links" },
+    { n: repo.orphans || 0, label: "docs sem ligação", view: "graph", act: "graph" },
+    { n: repo.fragments || 0, label: "fragmentos de changelog", view: "changelog", act: "changelog" },
+    { n: repo.dirty || 0, label: "worktrees com alterações", view: "change", act: "change" },
+  ].map((r) => `<div class="alertrow"><span class="dot ${r.n ? "warn" : ""}"></span><span class="grow">${nf.format(r.n)} ${esc(r.label)}</span>
+      <button class="btn sm" type="button" data-act="${r.act === "links" ? "go" : r.act === "graph" ? "go" : r.act === "changelog" ? "coll" : "go"}" ${r.act === "changelog" ? 'data-coll="changelog"' : `data-view="${r.view}"`}>${r.act === "changelog" ? "Abrir" : "Abrir"}</button></div>`).join("");
+  const checks = (d.checks || []);
+  const anyRunning = checks.some((c) => c.status === "running") || h.allRunning;
+  const checkRows = checks.map((c) => healthCheckRow(c, anyRunning)).join("");
+  const handoff = d.handoffToday && d.handoffFile ? `<div class="alertrow"><span class="dot ok"></span><span class="grow">Nota de handoff de hoje: ${esc(d.handoffFile)}</span>
+      <button class="btn sm" type="button" data-act="doc" data-doc="${esc("docs/handoff/" + d.handoffFile)}">Abrir</button></div>` : `<div class="alertrow"><span class="dot warn"></span><span class="grow">Sem nota de handoff de hoje no checkout raiz</span></div>`;
+  return `<div class="row" style="margin-bottom:8px"><span class="meta">${esc(env.repo || "")} · v${esc(env.version || "")} · índice há ${esc(ageText(env.indexAgeSeconds))}</span>
+      <span class="spacer"></span><button class="linkbtn" type="button" data-act="health-refresh">Atualizar</button></div>
+    <div class="plain-h">Diagnóstico</div>
+    <div class="covarea"><span class="dot ok"></span><div class="grow"><b>Processo</b> <span class="meta">no ar há ${esc(ageText(env.uptimeSeconds))} · ${esc(env.platform || "")}</span></div></div>
+    <div class="covarea"><span class="dot ok"></span><div class="grow"><b>Repositório</b> <span class="meta">${esc(env.repo || "")}</span><div class="meta">${nf.format(repo.worktrees || 0)} worktrees · ${nf.format(repo.dirty || 0)} com alterações · comandos ${settings.allow_commands === false ? "desligados" : "ligados"}${settings.repo_path ? " · repo fixado em " + esc(settings.repo_path) : ""}</div></div></div>
+    <div class="covarea"><span class="dot ${perms === "—" ? "warn" : "ok"}"></span><div class="grow"><b>Permissões</b> <span class="meta">${esc(perms)}</span><div class="meta">workspaces: ${esc(rooms)}</div></div></div>
+    ${toolRows}
+    <div class="plain-h section-gap">Documentação e repositório</div>
+    ${handoff}
+    ${repoRows}
+    <div class="plain-h section-gap">Checagens <span class="meta">· ${nf.format(checks.filter((c) => c.status === "ok").length)} de ${nf.format(checks.length)} ok</span>
+      <button class="btn sm" type="button" data-act="health-run-all" ${anyRunning ? "disabled" : ""} style="margin-left:8px">${h.allRunning ? "Rodando…" : "Rodar todas"}</button></div>
+    ${checkRows || `<p class="meta">Nenhuma checagem disponível.</p>`}
+    <p class="meta section-gap">As checagens rodam os alvos reais do Makefile, uma de cada vez; os recibos ficam em Operar. ${env.dataDir ? "Dados: " + esc(env.dataDir) + "." : ""}</p>`;
 }
 
 /* ---------------- dialogs ---------------- */
@@ -1636,7 +1712,19 @@ document.addEventListener("click", (e) => {
   if (act === "graph-doc") { void prepareGraph("doc", t.dataset.doc); return; }
   if (act === "graph-hubs") { void prepareGraph("hubs", ""); return; }
   if (act === "graph-retry") { void prepareGraph(S.graph.scope, S.graph.path); return; }
-  if (act === "gate") { void runGate(t.dataset.gate); return; }
+  if (act === "health-refresh") { void loadHealth(); return; }
+  if (act === "health-check") { void runOneCheck(t.dataset.id); return; }
+  if (act === "health-run-all") { void runAllChecks(); return; }
+  if (act === "go") {
+    const v = t.dataset.view;
+    setView(v);
+    if (v === "links") void prepareLinks();
+    if (v === "graph") void prepareGraph(S.read.doc ? "doc" : "hubs", S.read.doc || "");
+    if (v === "change") void prepareChange();
+    if (v === "coverage") void prepareCoverage();
+    if (v === "pulse") void preparePulse();
+    return;
+  }
   if (act === "dlg-cancel") { closeDialog(); return; }
   if (act === "dlg-confirm") { void confirmDialog(); return; }
   if (act === "wt-pick") { if (S.dialog) S.dialog.sel = t.value; return; }

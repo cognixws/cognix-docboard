@@ -909,6 +909,7 @@ export const COMMANDS = [
     { id: "books", label: "Catálogo de books", when: "regerar docs/books/README.md", tier: "write", cost: "instantâneo", kind: "run" },
     { id: "docs-check", label: "docs-check", when: "paridade de imagens e docs gerados (sem captura)", tier: "read", cost: "~10–30 s", kind: "run" },
     { id: "vale", label: "vale", when: "lint de prosa nas docs publicadas", tier: "read", cost: "~10–30 s", kind: "run" },
+    { id: "books-check", label: "books-check", when: "referências mortas e stamps velhos nos books", tier: "read", cost: "~10 s", kind: "run", via: "node scripts/books-check.mjs" },
     { id: "handoff-archive", label: "Arquivar notas velhas", when: "mover notas com mais de 30 dias para o arquivo", tier: "danger", cost: "revisar antes", kind: "archive" },
   ]},
   { group: "Build e UI", items: [
@@ -963,6 +964,9 @@ export function commandPlan(id, params = {}, ctx = {}) {
   const argv = [id];
   let cwd = cwdRepo;
 
+  if (id === "books-check") {
+    return { cmd, command: "node", argv: ["scripts/books-check.mjs"], cwd: cwdRepo, via: "node scripts/books-check.mjs" };
+  }
   if (id === "worktree") {
     if (!NAME_RE.test(String(params.name || ""))) return { error: "nome do worktree inválido (minúsculas, números, hífens)" };
     argv.push("NAME=" + params.name);
@@ -992,5 +996,5 @@ export function commandPlan(id, params = {}, ctx = {}) {
   // Owner-grade commands rebuild and restart main, never a worktree.
   if (id === "deploy" || id === "desktop-restart" || id === "land") cwd = ctx.main || cwdRepo;
 
-  return { cmd, argv, cwd };
+  return { cmd, command: "make", argv, cwd };
 }

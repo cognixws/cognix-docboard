@@ -32,6 +32,14 @@ The index is built in memory by the extension's own process and refreshed on
 demand or after five minutes. No database, no backup promise: the repository
 is the source of truth.
 
+## Health
+
+The Health view diagnoses the environment (process, index age, repo, settings,
+permissions, node/git/make/flock) and runs the safe checks: docs-check, vale,
+books-check (a script), hooks-check, keys-drift, flakes and desktop-test. It
+runs them one at a time, keeps the receipts in Operar, and never deploys,
+restarts or writes.
+
 ## Repair links
 
 The 170 broken links become a queue: each one is classified, and up to three

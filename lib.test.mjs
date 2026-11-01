@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildCorpus, searchCorpus, catalog, commandPlan, egoGraph, hubGraph, collectionGraph, backlinksOf, pulseOf, changeObligations, coverageOf, repairLinks } from "./lib.mjs";
+import { buildCorpus, searchCorpus, catalog, commandPlan, findCommand, egoGraph, hubGraph, collectionGraph, backlinksOf, pulseOf, changeObligations, coverageOf, repairLinks } from "./lib.mjs";
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "docboard-test-"));
@@ -94,6 +94,9 @@ test("commandPlan validates parameters and chooses the cwd", () => {
   assert.deepEqual(commandPlan("book", { name: "run", type: "runbook" }, ctx).argv, ["book", "NAME=run", "TYPE=runbook"]);
   assert.match(commandPlan("book", { name: "run", type: "nope" }, ctx).error, /tipo/);
   assert.equal(commandPlan("deploy", {}, { ...ctx, main: "/main" }).cwd, "/main");
+  const bc = commandPlan("books-check", {}, ctx);
+  assert.equal(bc.command, "node");
+  assert.deepEqual(bc.argv, ["scripts/books-check.mjs"]);
   assert.match(commandPlan("nope", {}, ctx).error, /catálogo/);
   assert.match(commandPlan("deploy", {}, { ...ctx, hasMakefile: false }).error, /Makefile/);
 });
@@ -175,4 +178,12 @@ test("repair links suggests the closest indexed path and a relative link", () =>
   const missing = one.links.find((l) => l.normalized === "docs/plans/missing.md");
   assert.ok(missing && missing.suggestions.length === 0);
   assert.ok(r.stats.suggested >= 1);
+});
+
+test("health checks are safe catalog commands", () => {
+  for (const id of ["docs-check", "vale", "books-check", "hooks-check", "keys-drift", "flakes", "desktop-test"]) {
+    const c = findCommand(id);
+    assert.ok(c, id);
+    assert.notEqual(c.tier, "owner", id);
+  }
 });
