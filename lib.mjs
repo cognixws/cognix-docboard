@@ -370,5 +370,8 @@ export function commandPlan(id, params = {}, ctx = {}) {
     return { error: "faltam parâmetros deste comando" };
   }
 
+  // Owner-grade commands rebuild and restart main, never a worktree.
+  if (id === "deploy" || id === "desktop-restart" || id === "land") cwd = ctx.main || cwdRepo;
+
   return { cmd, argv, cwd };
 }

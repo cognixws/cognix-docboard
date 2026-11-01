@@ -168,9 +168,11 @@ function startRun(cmd, params) {
   if (!fs.existsSync(path.join(repo, "Makefile"))) return { status: 400, error: "este repositório não tem Makefile" };
   const ownerRunning = [...runs.values()].some((r) => r.status === "running" && OWNER.has(r.cmd));
   if (OWNER.has(cmd.id) && ownerRunning) return { status: 409, error: "outra operação owner-grade está rodando; uma por vez" };
-  const worktrees = cmd.id === "close" ? listWorktrees().worktrees.map((w) => w.path) : [];
+  let tree = { main: repo, worktrees: [] };
+  if (cmd.id === "close" || OWNER.has(cmd.id)) tree = listWorktrees();
+  const worktrees = cmd.id === "close" ? tree.worktrees.map((w) => w.path) : [];
   const plan = commandPlan(cmd.id, params || {}, {
-    repo, platform: PLATFORM, hasMakefile: true, worktrees,
+    repo, main: tree.main || repo, platform: PLATFORM, hasMakefile: true, worktrees,
   });
   if (plan.error) return { status: 400, error: plan.error };
 

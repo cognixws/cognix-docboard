@@ -88,6 +88,7 @@ test("commandPlan validates parameters and chooses the cwd", () => {
   assert.match(commandPlan("land", { branch: "x" }, ctx).error, /branch/);
   assert.deepEqual(commandPlan("book", { name: "run", type: "runbook" }, ctx).argv, ["book", "NAME=run", "TYPE=runbook"]);
   assert.match(commandPlan("book", { name: "run", type: "nope" }, ctx).error, /tipo/);
+  assert.equal(commandPlan("deploy", {}, { ...ctx, main: "/main" }).cwd, "/main");
   assert.match(commandPlan("nope", {}, ctx).error, /catálogo/);
   assert.match(commandPlan("deploy", {}, { ...ctx, hasMakefile: false }).error, /Makefile/);
 });

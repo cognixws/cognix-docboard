@@ -1,7 +1,7 @@
 {
   "id": "docboard",
   "name": "Docboard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "apiVersion": 10,
   "publisher": "COGNIX[WS]",
   "description": "The repository's docs in the bottom dock: read, search, see what is open, and operate the development environment. Person-only; no agent tool.",
