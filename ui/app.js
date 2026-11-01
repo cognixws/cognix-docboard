@@ -687,6 +687,22 @@ async function sendMessage() {
   }
 }
 
+async function openDiff(opts) {
+  const d = {
+    kind: "diff", loading: true, data: null, error: "",
+    base: opts.base || "", commit: opts.commit || "", path: opts.path || "",
+  };
+  S.dialog = d;
+  $("#overlay").classList.add("open");
+  renderDialog();
+  try {
+    const qs = "?base=" + encodeURIComponent(d.base) + "&commit=" + encodeURIComponent(d.commit) + "&path=" + encodeURIComponent(d.path);
+    d.data = await call("/diff" + qs);
+  } catch (e) { d.error = e.message; }
+  d.loading = false;
+  renderDialog();
+}
+
 async function openHistory(path) {
   openDialog("history", { loading: true, data: null, path });
   try {
@@ -1398,9 +1414,10 @@ function renderVisit() {
   const commitRows = commits.slice(0, 8).map((c) => `<div class="pulsecommit"><div class="grow">
       <span class="hash">${esc(c.hash)}</span> · <span class="meta">${esc(c.date)}</span> · ${esc(c.subject)}
       <div class="files">${(c.files || []).map((f) => `<button class="f" type="button" data-act="doc" data-doc="${esc(f)}">${esc(f.replace(/^docs\//, ""))}</button>`).join("")}${c.count > (c.files || []).length ? `<span class="meta">+${c.count - c.files.length}</span>` : ""}</div>
-    </div></div>`).join("");
-  const changedRows = changed.slice(0, 12).map((x) => `<button class="file" type="button" data-act="doc" data-doc="${esc(x.p)}"><span class="t">${esc(x.t)}</span><span class="d">${esc(x.p)}</span></button>`).join("");
-  const planRows = plans.slice(0, 8).map((x) => `<button class="file" type="button" data-act="doc" data-doc="${esc(x.p)}"><span class="t">${esc(x.t)}</span><span class="d">${esc(x.p)}</span></button>`).join("");
+    </div><button class="linkbtn" type="button" data-act="commit-diff" data-commit="${esc(c.hash)}">Ver diff</button></div>`).join("");
+  const changedRow = (x) => `<div class="row" style="align-items:center"><button class="file" type="button" data-act="doc" data-doc="${esc(x.p)}" style="flex:1"><span class="t">${esc(x.t)}</span><span class="d">${esc(x.p)}</span></button><button class="linkbtn" type="button" data-act="visit-diff" data-path="${esc(x.p)}" data-base="${esc(m.head || "")}">Ver diff</button></div>`;
+  const changedRows = changed.slice(0, 12).map(changedRow).join("");
+  const planRows = plans.slice(0, 8).map(changedRow).join("");
   const debtRow = (x, line) => `<div class="openrow"><div class="grow"><div class="txt">${esc(x.text)}</div><div class="meta">${esc(x.where)}</div></div>
       <button class="btn sm" type="button" data-act="doc" data-doc="${esc("docs/" + (x.where || "").split(":")[0])}" ${line && (x.where || "").includes(":") ? `data-line="${esc((x.where || "").split(":")[1])}"` : ""}>Abrir</button></div>`;
   return `${head}
@@ -1985,6 +2002,26 @@ function renderDialog() {
   } else if (d.kind === "archive") {
     html = dialogHeader("Arquivar notas velhas", "Move notas com mais de 30 dias para o arquivo; nada é apagado.")
       + (d.error ? `<div class="err">${esc(d.error)}</div>` : "") + dialogFoot("Arquivar", true);
+  } else if (d.kind === "diff") {
+    const label = d.commit ? "commit " + d.commit.slice(0, 7) : d.path;
+    let body;
+    if (d.loading) body = `<div class="sk" style="width:60%"></div><div class="sk" style="width:85%"></div><div class="sk" style="width:70%"></div>`;
+    else if (d.error) body = `<div class="empty"><b>Não consegui ler o diff.</b><p>${esc(d.error)}</p></div>`;
+    else {
+      const text = d.data.diff || "";
+      const lines = text.split("\n").map((l) => {
+        let cls = "ctx";
+        if (/^(diff |index |--- |\+\+\+ |new file|deleted file|similarity|rename )/.test(l)) cls = "meta";
+        else if (l.startsWith("@@")) cls = "hunk";
+        else if (l.startsWith("+")) cls = "add";
+        else if (l.startsWith("-")) cls = "del";
+        return `<span class="${cls}">${esc(l)}</span>`;
+      }).join("\n");
+      body = `<div class="row" style="margin-bottom:8px"><span class="meta">+${nf.format(d.data.added || 0)} · -${nf.format(d.data.removed || 0)}${d.data.truncated ? " · trecho" : ""}</span>
+          <span class="spacer"></span><button class="linkbtn" type="button" data-act="diff-copy">Copiar diff</button></div>
+        <pre class="docdiff">${lines || "Sem diferenças."}</pre>`;
+    }
+    html = dialogHeader("Diff", esc(label)) + body + `<div class="foot"><button class="btn" type="button" data-act="dlg-cancel">Fechar</button></div>`;
   } else if (d.kind === "message") {
     const agents = d.agents || [];
     let body;
@@ -2183,6 +2220,9 @@ document.addEventListener("click", (e) => {
     return;
   }
   if (act === "pulse-refresh") { void preparePulse(); return; }
+  if (act === "visit-diff") { void openDiff({ base: t.dataset.base, path: t.dataset.path }); return; }
+  if (act === "commit-diff") { void openDiff({ commit: t.dataset.commit }); return; }
+  if (act === "diff-copy") { if (S.dialog && S.dialog.data) void copyText(S.dialog.data.diff || "", "Diff"); return; }
   if (act === "visit-mark") { void markVisit(); return; }
   if (act === "visit-retry") { void loadVisit(); return; }
   if (act === "pulse-focus") { const el = document.getElementById(t.dataset.target); if (el) el.scrollIntoView({ block: "start" }); return; }

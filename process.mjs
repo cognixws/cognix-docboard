@@ -518,6 +518,33 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, openPage(c, String(q.get("tab") || "all"), q.get("q") || "", q.get("offset"), q.get("limit")));
     }
 
+    if (p === "/diff") {
+      const base = String(q.get("base") || "").trim();
+      const commit = String(q.get("commit") || "").trim();
+      const pathParam = String(q.get("path") || "").trim();
+      if (!base && !commit) return json(res, 400, { error: "informe base ou commit" });
+      if (base) { try { git(["cat-file", "-e", base + "^{commit}"], repo, 3000); } catch { return json(res, 400, { error: "commit base inválido" }); } }
+      if (commit) { try { git(["cat-file", "-e", commit + "^{commit}"], repo, 3000); } catch { return json(res, 400, { error: "commit inválido" }); } }
+      if (pathParam && !(pathParam.startsWith("docs/") || /^[^/]+\.md$/.test(pathParam))) return json(res, 400, { error: "caminho fora das docs" });
+      if (base && !pathParam) return json(res, 400, { error: "o diff desde a visita precisa de um documento" });
+      let out = "";
+      try {
+        out = commit
+          ? git(["show", "--format=", "--no-ext-diff", commit, "--", pathParam || "docs"], repo, 8000)
+          : git(["diff", base + "..HEAD", "--", pathParam], repo, 8000);
+      } catch (e) {
+        return json(res, 503, { error: e.message });
+      }
+      const truncated = out.length > 200000;
+      if (truncated) out = out.slice(0, 200000);
+      let added = 0, removed = 0;
+      for (const l of out.split("\n")) {
+        if (l.startsWith("+") && !l.startsWith("+++")) added += 1;
+        else if (l.startsWith("-") && !l.startsWith("---")) removed += 1;
+      }
+      return json(res, 200, { path: pathParam, base, commit, diff: out, truncated, added, removed });
+    }
+
     if (p === "/since") {
       const head = git(["rev-parse", "HEAD"], repo, 3000).trim();
       let base = String(q.get("base") || "").trim();
