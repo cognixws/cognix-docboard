@@ -52,6 +52,7 @@ const S = {
   pulse: { data: null, loading: false, error: "" },
   change: { worktrees: null, wt: "", data: null, loading: false, error: "" },
   coverage: { data: null, loading: false, error: "" },
+  links: { data: null, loading: false, error: "", q: "", view: "all" },
   dialog: null,
 };
 
@@ -215,7 +216,7 @@ function render() {
           <div class="sk" style="width:70%"></div><div class="sk" style="width:92%"></div><div class="sk" style="width:55%"></div></div></div>`;
     return;
   }
-  const map = { read: renderRead, search: renderSearch, open: renderOpen, operar: renderOperar, graph: renderGraph, pulse: renderPulse, change: renderChange, coverage: renderCoverage, map: renderMap, health: renderHealth };
+  const map = { read: renderRead, search: renderSearch, open: renderOpen, operar: renderOperar, graph: renderGraph, pulse: renderPulse, change: renderChange, coverage: renderCoverage, links: renderLinks, map: renderMap, health: renderHealth };
   content.innerHTML = (map[S.view] || renderRead)();
   content.scrollTop = S.scroll[keyOf()] || 0;
   S.lastKey = keyOf();
@@ -267,6 +268,10 @@ function syncChrome() {
   } else if (S.view === "coverage") {
     title = "Cobertura";
     sub = "áreas de código × docs de arquitetura";
+  } else if (S.view === "links") {
+    title = "Links";
+    const d = S.links.data;
+    sub = d ? `${nf.format(d.stats.total)} quebrados · ${nf.format(d.stats.suggested)} com sugestão` : "quebrados e sugestões de conserto";
   } else if (S.view === "change") {
     title = "Mudança";
     const d = S.change.data;
@@ -354,7 +359,7 @@ function buildRail() {
   el.innerHTML = item("read", "Read") + item("search", "Search") + item("graph", "Grafo")
     + `<div class="rail-group">Trabalho</div>` + item("change", "Mudança") + item("open", "Aberto", nf.format((S.stats.debts || 0) + (S.stats.questions || 0)))
     + (S.commandsEnabled ? item("operar", "Operar") : "")
-    + `<div class="rail-group">Saúde</div>` + item("map", "Map") + item("coverage", "Cobertura") + item("pulse", "Pulso") + item("health", "Health")
+    + `<div class="rail-group">Saúde</div>` + item("map", "Map") + item("coverage", "Cobertura") + item("links", "Links") + item("pulse", "Pulso") + item("health", "Health")
     + `<div class="rail-foot">${esc(repo.split("/").filter(Boolean).pop() || repo)}
        <br>${nf.format(S.stats.docs || 0)} arquivos · ${esc(S.overview ? S.overview.version : "")}</div>`;
   el.querySelectorAll("button[data-view]").forEach((b) => b.addEventListener("click", () => {
@@ -367,6 +372,7 @@ function buildRail() {
     if (b.dataset.view === "pulse") void preparePulse();
     if (b.dataset.view === "change") void prepareChange();
     if (b.dataset.view === "coverage") void prepareCoverage();
+    if (b.dataset.view === "links") void prepareLinks();
   }));
 }
 
@@ -870,6 +876,65 @@ async function stopRun(id) {
 
 
 
+
+
+/* ---------------- Links ---------------- */
+
+async function prepareLinks() {
+  S.view = "links";
+  S.links.loading = true;
+  S.links.error = "";
+  render();
+  try {
+    S.links.data = await call("/links");
+  } catch (e) {
+    S.links.error = e.message;
+    S.links.data = null;
+  }
+  S.links.loading = false;
+  render();
+}
+
+function renderLinks() {
+  const l = S.links;
+  if (l.loading) return `<div class="sk" style="width:40%"></div><div class="sk" style="width:75%"></div><div class="sk" style="width:60%"></div>`;
+  if (l.error) return `<div class="empty"><b>Não consegui ler os links.</b><p>${esc(l.error)}</p><button class="btn sm" type="button" data-act="links-refresh">Tentar de novo</button></div>`;
+  const d = l.data;
+  if (!d) return `<div class="empty"><b>Sem dados ainda.</b><p>Atualize para listar os links quebrados.</p><button class="btn sm" type="button" data-act="links-refresh">Atualizar</button></div>`;
+  const st = d.stats || {};
+  const q = l.q.trim().toLowerCase();
+  const kpis = [
+    { v: nf.format(st.total || 0), l: "links quebrados", c: `${nf.format(st.origins || 0)} documentos de origem` },
+    { v: nf.format(st.suggested || 0), l: "com sugestão", c: "destino interno provável" },
+    { v: nf.format(st.unsuggested || 0), l: "sem candidato", c: "talvez seja link da docs-site" },
+  ].map((k) => `<div class="kpi"><div class="v">${k.v}</div><div class="l">${esc(k.l)}</div><div class="c">${esc(k.c)}</div></div>`).join("");
+  const view = l.view || "all";
+  const matchView = (x) => view === "all" || (view === "suggested" ? (x.suggestions || []).length > 0 : (x.suggestions || []).length === 0);
+  const origins = (d.origins || []).map((o) => {
+    const links = o.links.filter((x) => matchView(x) && (!q || (o.fromTitle + " " + o.from + " " + x.target + " " + (x.suggestions || []).map((s) => s.title).join(" ")).toLowerCase().includes(q)))
+      .slice().sort((a, b) => ((b.suggestions || []).length > 0 ? 1 : 0) - ((a.suggestions || []).length > 0 ? 1 : 0));
+    if (!links.length) return "";
+    const rows = links.map((x) => {
+      const sug = (x.suggestions || []).map((s) => `${s.exact ? "" : '<span class="tag owner">revisar</span>'}<button class="btn sm" type="button" data-act="doc" data-doc="${esc(s.path)}">${esc(s.title.length > 40 ? s.title.slice(0, 38) + "…" : s.title)}</button><button class="linkbtn" type="button" data-act="copy" data-what="Link" data-copy="${esc(s.link)}" title="Copiar ${esc(s.link)}">Copiar link</button>`).join("");
+      return `<div class="alertrow" style="align-items:flex-start"><span class="dot bad"></span>
+        <div class="grow"><span class="mono">${esc(x.target)}</span>${x.normalized !== x.target ? ` <span class="meta">→ ${esc(x.normalized)}</span>` : ""}
+          <div class="acts" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">${sug || `<span class="meta">Sem candidato interno; pode ser um link da docs-site.</span>`}</div>
+        </div></div>`;
+    }).join("");
+    return `<div class="listhead section-gap"><b>${esc(o.fromTitle)}</b><span class="meta">${nf.format(links.length)}</span>
+        <button class="linkbtn" type="button" data-act="doc" data-doc="${esc(o.from)}">Abrir origem</button></div>${rows}`;
+  }).join("");
+  const totalShown = (d.origins || []).reduce((n, o) => n + o.links.filter((x) => matchView(x) && (!q || (o.fromTitle + " " + o.from + " " + x.target + " " + (x.suggestions || []).map((s) => s.title).join(" ")).toLowerCase().includes(q))).length, 0);
+  const views = [["all", `Todos ${nf.format(st.total || 0)}`], ["suggested", `Com sugestão ${nf.format(st.suggested || 0)}`], ["none", `Sem candidato ${nf.format(st.unsuggested || 0)}`]]
+    .map(([id, label]) => `<button type="button" data-act="links-view" data-v="${id}" aria-pressed="${view === id}">${label}</button>`).join("");
+  return `<div class="row" style="margin-bottom:10px"><span class="meta">${esc(d.repo || "")}</span><span class="spacer"></span><button class="linkbtn" type="button" data-act="links-refresh">Atualizar</button></div>
+    <div class="kpis">${kpis}</div>
+    <div class="seg" style="margin-bottom:10px">${views}</div>
+    <div class="fieldwrap" style="margin-bottom:10px"><input id="links-filter" type="search" placeholder="Filtrar origem, destino ou sugestão…" value="${esc(l.q)}" aria-label="Filtrar links quebrados" /></div>
+    ${q ? `<p class="meta">${nf.format(totalShown)} link(s) no filtro.</p>` : ""}
+    ${origins || `<div class="empty"><b>Nenhum link neste recorte.</b><p>${q ? "Tente outra palavra." : view === "suggested" ? "Nenhum quebrado tem candidato interno; os demais apontam para a docs-site ou para fora." : view === "none" ? "Todos os quebrados têm algum candidato." : "O índice não aponta nenhum destino .md que não exista."}</p><button class="btn sm" type="button" data-act="links-view" data-v="all">Ver todos</button></div>`}
+    <p class="meta section-gap">A sugestão é heurística: nome igual em outro lugar conta como forte; distância de edição conta como “revisar”. A extensão copia o link, não edita o arquivo.</p>`;
+}
 
 /* ---------------- Coverage ---------------- */
 
@@ -1545,6 +1610,8 @@ document.addEventListener("click", (e) => {
     else if (target === "changelog") { S.read.coll = "changelog"; S.read.doc = null; S.view = "read"; void openCollection("changelog"); }
     return;
   }
+  if (act === "links-refresh") { void prepareLinks(); return; }
+  if (act === "links-view") { S.links.view = t.dataset.v; render(); return; }
   if (act === "coverage-refresh") { void prepareCoverage(); return; }
   if (act === "coverage-focus") { const el = document.getElementById(t.dataset.target); if (el) el.scrollIntoView({ block: "start" }); return; }
   if (act === "open-change") { void prepareChange(); return; }
@@ -1584,6 +1651,13 @@ document.addEventListener("input", (e) => {
     S.operar.filter = e.target.value;
     const list = $("#cmdlist");
     if (list) list.innerHTML = catalogHtml();
+  } else if (e.target.id === "links-filter") {
+    S.links.q = e.target.value;
+    const y = $("#content").scrollTop;
+    render();
+    $("#content").scrollTop = y;
+    const input = $("#links-filter");
+    if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
   } else if (e.target.id === "open-filter") {
     S.open.q = e.target.value;
     S.focusOpen = true;

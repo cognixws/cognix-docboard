@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildCorpus, searchCorpus, catalog, commandPlan, egoGraph, hubGraph, collectionGraph, backlinksOf, pulseOf, changeObligations, coverageOf } from "./lib.mjs";
+import { buildCorpus, searchCorpus, catalog, commandPlan, egoGraph, hubGraph, collectionGraph, backlinksOf, pulseOf, changeObligations, coverageOf, repairLinks } from "./lib.mjs";
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "docboard-test-"));
@@ -16,7 +16,7 @@ function fixture() {
   write("docs/plans/panel.md", "# Panel plan\n\nSee the [subsystem](../architecture/one.md). It follows ADR-0001.\n\n## Open questions (owner)\n\n1. **Which panel**: the dock (recommended) or a pane?\n   It is a link's intent.\n2. A second question?\n\n## Next\n\nText.\n");
   write("docs/handoff/open/topic.md", "# Topic\n\n- [ ] First debt\n  continued here.\n- [x] Done debt\n\n- [ ] Second debt\n");
   write("docs/handoff/2026-01-01-a.md", "# A session\n");
-  write("docs/architecture/one.md", "# One subsystem\n\nThe land does not restart. See [the plan](../plans/panel.md), docs/decisions/0001-one.md and ADR-0001.\n\nA [missing doc](../plans/missing.md) is broken.\n");
+  write("docs/architecture/one.md", "# One subsystem\n\nThe land does not restart. See [the plan](../plans/panel.md), docs/decisions/0001-one.md and ADR-0001.\n\nA [missing doc](../plans/missing.md) is broken, and a [typo](../plans/panell.md) too.\n");
   write("docs/changelog.d/x.md", "# Fragment\n");
   write("docs/books/runbooks/build.md", "# Build\n\nRun the Makefile target before shipping.\n");
   write("docs/architecture/widget.md", "# Widget subsystem\n\nThe widget lives in internal/widget/.\n");
@@ -163,4 +163,16 @@ test("coverage maps code areas to architecture docs and finds orphans", () => {
   assert.ok(cov.orphans.some((o) => o.path === "docs/architecture/orphan.md"));
   assert.ok(!cov.orphans.some((o) => o.path === "docs/architecture/widget.md"));
   assert.equal(cov.stats.missing, cov.missing.length);
+});
+
+test("repair links suggests the closest indexed path and a relative link", () => {
+  const c = buildCorpus(fixture());
+  const r = repairLinks(c);
+  const one = r.origins.find((o) => o.from === "docs/architecture/one.md");
+  assert.ok(one);
+  const typo = one.links.find((l) => l.normalized === "docs/plans/panell.md");
+  assert.ok(typo && typo.suggestions.some((s) => s.path === "docs/plans/panel.md" && s.link === "../plans/panel.md"));
+  const missing = one.links.find((l) => l.normalized === "docs/plans/missing.md");
+  assert.ok(missing && missing.suggestions.length === 0);
+  assert.ok(r.stats.suggested >= 1);
 });

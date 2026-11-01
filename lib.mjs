@@ -725,6 +725,80 @@ export function coverageOf(repo, corpus, { lastDate = {}, now = Date.now() } = {
   };
 }
 
+
+/* ---------------- repair links ---------------- */
+
+function editDistance(a, b) {
+  if (a === b) return 0;
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+function relativeLink(from, to) {
+  const dir = path.dirname(from);
+  return path.relative(dir, to).split(path.sep).join("/");
+}
+
+function suggestTarget(corpus, rel) {
+  const base = path.basename(rel).toLowerCase();
+  const exact = corpus.files.filter((f) => f.p !== rel && path.basename(f.p).toLowerCase() === base).slice(0, 3);
+  if (exact.length) return exact.map((f) => ({ path: f.p, title: f.t, exact: true, distance: 0 }));
+  // A typo is only suggested inside a folder the index already has; a missing
+  // folder usually means a docs-site link, not a misspelling.
+  const dir = path.dirname(rel) + "/";
+  if (!corpus.files.some((f) => f.p.startsWith(dir))) return [];
+  return corpus.files
+    .filter((f) => f.p.startsWith(dir))
+    .map((f) => ({ f, d: editDistance(base, path.basename(f.p).toLowerCase()) }))
+    .filter((x) => x.d <= 2)
+    .sort((a, b) => a.d - b.d || a.f.p.localeCompare(b.f.p))
+    .slice(0, 3)
+    .map((x) => ({ path: x.f.p, title: x.f.t, exact: false, distance: x.d }));
+}
+
+export function repairLinks(corpus) {
+  const byPath = new Map(corpus.files.map((f) => [f.p, f]));
+  const cache = new Map();
+  const groups = new Map();
+  let suggested = 0;
+  for (const b of corpus.graph.broken) {
+    const rel = targetPath(b.target, b.from) || b.target;
+    let sug = cache.get(rel);
+    if (!sug) { sug = suggestTarget(corpus, rel); cache.set(rel, sug); }
+    if (sug.length) suggested += 1;
+    const from = byPath.get(b.from);
+    if (!groups.has(b.from)) {
+      groups.set(b.from, { from: b.from, fromTitle: from ? from.t : b.from, fromColl: from ? from.c : "", links: [] });
+    }
+    groups.get(b.from).links.push({
+      target: b.target,
+      normalized: rel,
+      suggestions: sug.map((s) => ({ ...s, link: relativeLink(b.from, s.path) })),
+    });
+  }
+  const origins = [...groups.values()].map((g) => ({ ...g, count: g.links.length }))
+    .sort((a, b) => b.count - a.count || a.from.localeCompare(b.from));
+  return {
+    origins,
+    stats: {
+      total: corpus.graph.broken.length,
+      origins: origins.length,
+      suggested,
+      unsuggested: corpus.graph.broken.length - suggested,
+    },
+  };
+}
+
 /* ---------------- search ---------------- */
 
 const STOP = new Set(["por", "que", "o", "a", "os", "as", "de", "do", "da", "dos", "das", "um", "uma", "e", "é", "em", "no", "na", "não", "se", "para", "com", "como", "quando", "the", "of", "to", "and", "in", "is", "on", "for", "with", "an"]);

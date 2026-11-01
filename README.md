@@ -32,6 +32,13 @@ The index is built in memory by the extension's own process and refreshed on
 demand or after five minutes. No database, no backup promise: the repository
 is the source of truth.
 
+## Repair links
+
+The 170 broken links become a queue: each one is classified, and up to three
+indexed destinations are suggested by file name and edit distance, with the
+corrected relative link ready to copy. It also lists origin and suggestion;
+it never edits a file.
+
 ## Coverage
 
 Which code area has an architecture doc, and which does not: `internal/*`

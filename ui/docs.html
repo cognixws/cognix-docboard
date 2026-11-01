@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="docboard-version" content="0.5.0">
+<meta name="docboard-version" content="0.6.0">
 <title>Docs</title>
 <link rel="stylesheet" href="../__picode/tokens.css">
 <style>
@@ -37,7 +37,7 @@
   body {
     margin: 0; height: 100vh; overflow: hidden;
     background: var(--bg-base); color: var(--text-primary);
-    font-family: var(--font-sans), system-ui, sans-serif;
+    font-family: var(--mono), ui-monospace, monospace;
     font-size: 13px; line-height: 1.5;
   }
   .app { height: 100%; display: flex; min-height: 0; }
@@ -128,19 +128,24 @@
   .listhead .meta { margin-left: auto; }
   .crumb { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-secondary); margin-bottom: 8px; }
   .crumb .sep { opacity: .55; }
-  .doc-title { font-size: 18px; line-height: 1.25; font-weight: 650; margin: 2px 0 3px; letter-spacing: -.01em; }
+  .doc-title { font-family: var(--font-sans), system-ui, sans-serif; font-size: 22px; line-height: 1.25; font-weight: 650; margin: 2px 0 3px; letter-spacing: -.01em; }
   .actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 14px; }
 
-  .reader { font-size: 13.5px; max-width: 74ch; line-height: 1.62; }
-  .reader h2, .reader h3 { font-size: 15px; margin: 20px 0 6px; font-weight: 650; letter-spacing: -.005em; }
-  .reader h4 { font-size: 13.8px; margin: 16px 0 5px; font-weight: 650; }
-  .reader h5 { font-size: 13px; margin: 14px 0 4px; font-weight: 650; }
-  .reader p, .reader li { font-size: 13.5px; }
-  .reader pre { background: var(--bg-base); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; overflow: auto; font-size: 11.5px; line-height: 1.5; }
+  .reader { font-family: var(--font-sans), system-ui, sans-serif; font-size: 15px; line-height: 1.65; max-width: 74ch; color: var(--text-primary); overflow-wrap: break-word; }
+  .reader h2, .reader h3 { font-size: 1.5em; line-height: 1.25; margin: 24px 0 16px; font-weight: 600; letter-spacing: normal; padding-bottom: .3em; border-bottom: 1px solid var(--border); }
+  .reader h4 { font-size: 1.25em; line-height: 1.25; margin: 24px 0 16px; font-weight: 600; }
+  .reader h5 { font-size: 1em; line-height: 1.25; margin: 24px 0 16px; font-weight: 600; }
+  .reader p, .reader li { font-size: inherit; }
+  .reader p { margin: 0 0 16px; }
+  .reader ul, .reader ol { margin: 0 0 16px; padding-left: 2em; }
+  .reader li { margin: 0; }
+  .reader li + li { margin-top: .25em; }
+  .reader pre { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 6px; padding: 16px; overflow: auto; font-size: .85em; line-height: 1.45; }
   .reader pre code { border: 0; background: transparent; padding: 0; }
-  .reader blockquote { margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--border-strong); color: var(--text-secondary); }
-  .reader table { font-size: 12.3px; }
-  .reader hr { border: 0; border-top: 1px solid var(--border); margin: 14px 0; }
+  .reader code { font-family: var(--mono), ui-monospace, monospace; font-size: .85em; border: 0; border-radius: 6px; padding: .2em .4em; background: color-mix(in srgb, var(--text-secondary) 16%, transparent); }
+  .reader blockquote { margin: 0 0 16px; padding: 0 1em; border-left: .25em solid var(--border-strong); color: var(--text-secondary); }
+  .reader table { font-size: .9em; }
+  .reader hr { border: 0; height: .25em; background: var(--border); margin: 24px 0; }
   .flash { animation: flash 4s ease-out; }
   @keyframes flash { 0%, 45% { background: var(--accent-soft); } 100% { background: transparent; } }
 
