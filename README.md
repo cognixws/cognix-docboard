@@ -32,6 +32,15 @@ The index is built in memory by the extension's own process and refreshed on
 demand or after five minutes. No database, no backup promise: the repository
 is the source of truth.
 
+## The graph
+
+The process resolves the links between documents: markdown links, bare
+`docs/…md` paths and `ADR-NNNN` references, ignoring code blocks. It exposes
+the hubs (the most linked docs), the flow between collections, and a
+document's ego graph with its backlinks, outbound links and broken targets.
+The page draws it with the D3 that PiCode serves (`../_picode/lib/d3.js`):
+no new dependency, no network, and the same data offline.
+
 ## Settings
 
 | Setting | Default | What it does |
