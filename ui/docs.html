@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="docboard-version" content="0.10.0">
+<meta name="docboard-version" content="0.11.0">
 <title>Docs</title>
 <link rel="stylesheet" href="../__picode/tokens.css">
 <style>
@@ -212,6 +212,11 @@
   .graphlist button:hover { background: var(--bg-base); }
   .graphlist .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .graphlist .d { font-size: 10.5px; color: var(--text-secondary); white-space: nowrap; }
+  .queuebar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--border); background: var(--bg-panel); margin-bottom: 8px; }
+  .queueitem { display: flex; align-items: flex-start; gap: 9px; padding: 7px 2px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .queueitem input { margin-top: 3px; accent-color: var(--accent-fill); flex: none; }
+  .queueitem .grow { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .queueitem b { font-size: 12.8px; font-weight: 600; }
   .covarea { display: flex; align-items: center; gap: 10px; padding: 7px 2px; border-bottom: 1px solid var(--border); font-size: 12.5px; flex-wrap: wrap; }
   .covarea .name { font-weight: 600; min-width: 140px; }
   .covarea .grow { flex: 1; min-width: 160px; }

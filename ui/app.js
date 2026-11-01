@@ -16,6 +16,7 @@ function ctxLabel(ctx) {
   if (ctx.kind === "coverage") return "área " + ctx.area;
   if (ctx.kind === "stale") return ctx.path;
   if (ctx.kind === "doc") return ctx.path;
+  if (ctx.kind === "batch") return (ctx.items || []).length + " itens";
   return ctx.kind;
 }
 function messageFor(ctx) {
@@ -39,6 +40,17 @@ function messageFor(ctx) {
     return `O documento ${ctx.path} está sem commit há ${ctx.age} dias. Atualize o que estiver defasado, rode docs-check/vale e responda com o commit.`;
   }
   if (ctx.kind === "doc") return `Sobre ${ctx.path}: `;
+  if (ctx.kind === "batch") {
+    const line = (it) => {
+      if (it.kind === "link") return `[link] ${it.from} -> ${it.target}${it.suggestion ? ` (sugestão: ${it.suggestion.path}, link ${it.suggestion.link})` : ""}`;
+      if (it.kind === "obligation") return `[obrigação] ${it.title} — ${it.why || ""}`;
+      if (it.kind === "coverage") return `[cobertura] área ${it.area} (${it.kindLabel || "código"} · ${it.files} arquivos) — criar docs/architecture/${it.area}.md`;
+      if (it.kind === "stale") return `[frio] ${it.path} — ${it.age} dias sem commit`;
+      return it.kind;
+    };
+    const lines = (ctx.items || []).map((it, i) => `${i + 1}. ${line(it)}`);
+    return `No repositório ${repo}, preciso destes consertos:\n${lines.join("\n")}\nFaça cada um, rode os gates e responda com os commits.`;
+  }
   return "";
 }
 
@@ -87,6 +99,7 @@ const S = {
   pulse: { data: null, loading: false, error: "" },
   change: { worktrees: null, wt: "", data: null, loading: false, error: "" },
   coverage: { data: null, loading: false, error: "" },
+  queue: { items: [], selected: new Set(), loading: false, error: "", worktree: "", branch: "" },
   links: { data: null, loading: false, error: "", q: "", view: "all" },
   dialog: null,
 };
@@ -251,7 +264,7 @@ function render() {
           <div class="sk" style="width:70%"></div><div class="sk" style="width:92%"></div><div class="sk" style="width:55%"></div></div></div>`;
     return;
   }
-  const map = { read: renderRead, search: renderSearch, open: renderOpen, operar: renderOperar, graph: renderGraph, pulse: renderPulse, change: renderChange, coverage: renderCoverage, links: renderLinks, map: renderMap, health: renderHealth };
+  const map = { read: renderRead, search: renderSearch, open: renderOpen, operar: renderOperar, graph: renderGraph, pulse: renderPulse, change: renderChange, coverage: renderCoverage, links: renderLinks, queue: renderQueue, map: renderMap, health: renderHealth };
   content.innerHTML = (map[S.view] || renderRead)();
   content.scrollTop = S.scroll[keyOf()] || 0;
   S.lastKey = keyOf();
@@ -302,6 +315,9 @@ function syncChrome() {
   } else if (S.view === "pulse") {
     title = "Pulso";
     sub = "o estado das docs agora";
+  } else if (S.view === "queue") {
+    title = "Fila";
+    sub = S.queue.items.length ? `${nf.format(S.queue.items.length)} pontos · ${S.queue.branch || S.queue.worktree || "repo"}` : "consertos revelados, em uma fila";
   } else if (S.view === "coverage") {
     title = "Cobertura";
     sub = "áreas de código × docs de arquitetura";
@@ -395,7 +411,7 @@ function buildRail() {
   if (!el) return;
   const repo = S.overview ? S.overview.repo : "";
   el.innerHTML = item("read", "Read") + item("search", "Search") + item("graph", "Grafo")
-    + `<div class="rail-group">Trabalho</div>` + item("change", "Mudança") + item("open", "Aberto", nf.format((S.stats.debts || 0) + (S.stats.questions || 0)))
+    + `<div class="rail-group">Trabalho</div>` + item("change", "Mudança") + item("queue", "Fila") + item("open", "Aberto", nf.format((S.stats.debts || 0) + (S.stats.questions || 0)))
     + (S.commandsEnabled ? item("operar", "Operar") : "")
     + `<div class="rail-group">Saúde</div>` + item("map", "Map") + item("coverage", "Cobertura") + item("links", "Links") + item("pulse", "Pulso") + item("health", "Saúde")
     + `<div class="rail-foot">${esc(repo.split("/").filter(Boolean).pop() || repo)}
@@ -409,6 +425,7 @@ function buildRail() {
     if (b.dataset.view === "graph") void prepareGraph(S.read.doc ? "doc" : "hubs", S.read.doc || "");
     if (b.dataset.view === "pulse") void preparePulse();
     if (b.dataset.view === "change") void prepareChange();
+    if (b.dataset.view === "queue") void prepareQueue();
     if (b.dataset.view === "coverage") void prepareCoverage();
     if (b.dataset.view === "links") void prepareLinks();
   }));
@@ -1071,6 +1088,95 @@ function renderLinks() {
     ${q ? `<p class="meta">${nf.format(totalShown)} link(s) no filtro.</p>` : ""}
     ${origins || `<div class="empty"><b>Nenhum link neste recorte.</b><p>${q ? "Tente outra palavra." : view === "suggested" ? "Nenhum quebrado tem candidato interno; os demais apontam para a docs-site ou para fora." : view === "none" ? "Todos os quebrados têm algum candidato." : "O índice não aponta nenhum destino .md que não exista."}</p><button class="btn sm" type="button" data-act="links-view" data-v="all">Ver todos</button></div>`}
     <p class="meta section-gap">A sugestão é heurística: nome igual em outro lugar conta como forte; distância de edição conta como “revisar”. A extensão copia o link, não edita o arquivo.</p>`;
+}
+
+
+/* ---------------- Queue ---------------- */
+
+async function prepareQueue() {
+  S.view = "queue";
+  S.queue.loading = true;
+  S.queue.error = "";
+  render();
+  try {
+    const [links, pulse, cov, trees] = await Promise.all([
+      call("/links"), call("/pulse"), call("/coverage"), call("/worktrees"),
+    ]);
+    const ws = (trees.worktrees || []);
+    const pick = ws.find((w) => !w.main && w.dirty > 0) || ws.find((w) => w.main) || ws[0];
+    const change = pick ? await call("/change?worktree=" + encodeURIComponent(pick.path)) : { obligations: [] };
+    const items = [];
+    (links.origins || []).forEach((o) => {
+      (o.links || []).forEach((x) => {
+        const sug = (x.suggestions || [])[0];
+        if (!sug) return;
+        items.push({
+          id: "l:" + o.from + ":" + x.target, kind: "link",
+          title: o.fromTitle, detail: x.target + " → " + sug.path + " (" + sug.link + ")",
+          ctx: { kind: "link", from: o.from, target: x.target, suggestion: sug },
+        });
+      });
+    });
+    (change.obligations || []).forEach((o) => items.push({
+      id: "o:" + o.id, kind: "obligation", title: o.title, detail: o.why,
+      ctx: { kind: "obligation", title: o.title, why: o.why, evidence: o.evidence, targets: o.targets, worktree: change.worktree, branch: change.branch },
+    }));
+    (cov.missing || []).slice().sort((a, b) => b.files - a.files).slice(0, 16).forEach((a) => items.push({
+      id: "c:" + a.id, kind: "coverage", title: "Área " + a.name,
+      detail: a.kind + " · " + a.files + " arquivos · docs/architecture/" + a.name + ".md",
+      ctx: { kind: "coverage", area: a.name, kindLabel: a.kind, files: a.files },
+    }));
+    (pulse.stale || []).forEach((s) => items.push({
+      id: "s:" + s.p, kind: "stale", title: s.t, detail: s.p + " · " + s.age + " dias sem commit",
+      ctx: { kind: "stale", path: s.p, age: s.age },
+    }));
+    S.queue.items = items;
+    S.queue.selected = new Set();
+    S.queue.worktree = change.worktree || "";
+    S.queue.branch = change.branch || "";
+  } catch (e) {
+    S.queue.error = e.message;
+  }
+  S.queue.loading = false;
+  render();
+}
+
+function queueFoot() {
+  const n = S.queue.selected.size;
+  const el = $("#queue-count");
+  if (el) el.textContent = `${nf.format(n)} selecionado(s) · máx. 12 por pedido`;
+}
+
+function askQueue() {
+  const n = S.queue.selected.size;
+  if (!n) { toast("Selecione ao menos um item."); return; }
+  if (n > 12) { toast("Até 12 por pedido; envie em duas mensagens."); return; }
+  const items = S.queue.items.filter((x) => S.queue.selected.has(x.id)).map((x) => x.ctx);
+  void openMessage({ kind: "batch", items });
+}
+
+function renderQueue() {
+  const q = S.queue;
+  if (q.loading) return `<div class="sk" style="width:40%"></div><div class="sk" style="width:75%"></div><div class="sk" style="width:55%"></div><p class="meta">Lendo links, cobertura, pulso e mudança…</p>`;
+  if (q.error) return `<div class="empty"><b>Não consegui montar a fila.</b><p>${esc(q.error)}</p><button class="btn sm" type="button" data-act="queue-refresh">Tentar de novo</button></div>`;
+  const items = q.items || [];
+  if (!items.length) return `<div class="empty"><b>Nada para consertar.</b><p>O índice não revelou quebrados com sugestão, obrigações, descobertas ou docs frios.</p><button class="btn sm" type="button" data-act="queue-refresh">Atualizar</button></div>`;
+  const groups = [["link", "Links com sugestão"], ["obligation", "Mudança"], ["coverage", "Cobertura"], ["stale", "Docs frios"]];
+  const rows = groups.map(([kind, label]) => {
+    const list = items.filter((x) => x.kind === kind);
+    if (!list.length) return "";
+    return `<div class="cmdgroup">${label} · ${nf.format(list.length)}</div>` + list.map((it) => `
+      <label class="queueitem"><input type="checkbox" data-act="queue-pick" data-q="${esc(it.id)}" ${q.selected.has(it.id) ? "checked" : ""} />
+        <span class="grow"><b>${esc(it.title)}</b><span class="meta">${esc(it.detail)}</span></span></label>`).join("");
+  }).join("");
+  return `<div class="queuebar"><span id="queue-count">${nf.format(q.selected.size)} selecionado(s) · máx. 12 por pedido</span>
+      <button class="linkbtn" type="button" data-act="queue-all">Selecionar todos</button>
+      <button class="linkbtn" type="button" data-act="queue-clear">Limpar</button>
+      <span class="spacer"></span>
+      <button class="btn sm" type="button" data-act="queue-refresh">Atualizar</button>
+      <button class="btn primary" type="button" data-act="queue-ask">Pedir conserto</button></div>
+    <p class="meta">${nf.format(items.length)} pontos · worktree ${esc(q.branch || q.worktree || "—")} · a extensão prepara o pedido; o agente corrige.</p>
+    ${rows}`;
 }
 
 /* ---------------- Coverage ---------------- */
@@ -1969,6 +2075,10 @@ document.addEventListener("click", (e) => {
   }
   if (act === "links-refresh") { void prepareLinks(); return; }
   if (act === "links-view") { S.links.view = t.dataset.v; render(); return; }
+  if (act === "queue-refresh") { void prepareQueue(); return; }
+  if (act === "queue-ask") { askQueue(); return; }
+  if (act === "queue-all") { S.queue.selected = new Set(S.queue.items.map((x) => x.id)); render(); return; }
+  if (act === "queue-clear") { S.queue.selected = new Set(); render(); return; }
   if (act === "coverage-refresh") { void prepareCoverage(); return; }
   if (act === "coverage-focus") { const el = document.getElementById(t.dataset.target); if (el) el.scrollIntoView({ block: "start" }); return; }
   if (act === "open-change") { void prepareChange(); return; }
@@ -2023,6 +2133,12 @@ document.addEventListener("click", (e) => {
 
 document.addEventListener("change", (e) => {
   if (e.target.id === "change-wt") void loadChange(e.target.value);
+  else if (e.target.dataset.act === "queue-pick") {
+    const id = e.target.dataset.q;
+    if (e.target.checked) S.queue.selected.add(id);
+    else S.queue.selected.delete(id);
+    queueFoot();
+  }
 });
 
 document.addEventListener("input", (e) => {

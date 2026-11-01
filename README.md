@@ -32,6 +32,13 @@ The index is built in memory by the extension's own process and refreshed on
 demand or after five minutes. No database, no backup promise: the repository
 is the source of truth.
 
+## Fix queue
+
+A single view gathers what the extension revealed: broken links with a
+suggestion, the open obligations of the worktree, uncovered code areas and
+stale docs. Choose up to twelve and send one structured message to an agent;
+the extension prepares the list, the agent edits and runs the gates.
+
 ## Message an agent
 
 A person can list the agents (`agents:read`) and send one of them a message
