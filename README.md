@@ -32,6 +32,13 @@ The index is built in memory by the extension's own process and refreshed on
 demand or after five minutes. No database, no backup promise: the repository
 is the source of truth.
 
+## Reader
+
+The document reader has "Nesta página" (a sticky outline of headings), the
+last commit and a History dialog with the last five commits, and references
+(backlinks and outbound links) at the end. The body is sans 15/1.65; the chrome
+is mono. No writes.
+
 ## Path
 
 Pick two documents (path or title) and see the shortest chain of references

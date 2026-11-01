@@ -43,7 +43,7 @@ const S = {
   scroll: {},
   lastKey: "",
   focusOpen: false,
-  read: { coll: null, doc: null, line: null, files: [], total: 0, loading: false, around: null, docMeta: null, docHtml: "", docLoading: false, docError: "" },
+  read: { coll: null, doc: null, line: null, files: [], total: 0, loading: false, around: null, docMeta: null, docHtml: "", docLoading: false, docError: "", outline: [] },
   search: { q: "", f: "all", busy: false, ran: false, files: [], open: [], err: "" },
   open: { tab: "all", q: "", offset: 0, questions: [], debts: [], counts: {}, loading: false },
   operar: { groups: [], enabled: false, filter: "", group: "all", runs: [], loading: false, timer: null, worktrees: null },
@@ -226,6 +226,7 @@ function render() {
     S.read.line = null;
     requestAnimationFrame(() => jumpToLine(content, line));
   }
+  if (S.view === "read" && S.read.doc) requestAnimationFrame(syncToc);
   if (S.view === "graph" && S.graph.data) requestAnimationFrame(drawGraph);
   if (S.focusOpen) {
     S.focusOpen = false;
@@ -452,6 +453,7 @@ function renderRead() {
   }
 
   const meta = r.docMeta;
+  const outline = r.outline || [];
   let body;
   if (r.docLoading) {
     body = `<div class="sk" style="width:72%"></div><div class="sk" style="width:94%"></div><div class="sk" style="width:61%"></div><p class="meta">Lendo o documento…</p>`;
@@ -464,17 +466,30 @@ function renderRead() {
     body = `<p class="meta">Carregando…</p>`;
   }
 
+  const last = meta && meta.lastCommit;
+  const toc = outline.length ? `<div class="tocbar" aria-label="Nesta página"><span class="toclabel">Nesta página</span>${outline.map((h) => `<button type="button" class="tocchip l${h.level}" data-act="toc" data-id="${esc(h.id)}" data-toc="${esc(h.id)}">${esc(h.text.length > 44 ? h.text.slice(0, 42) + "…" : h.text)}</button>`).join("")}</div>` : "";
+  const back = (meta && meta.backlinks) || [];
+  const outb = (meta && meta.outbound) || [];
+  const refBtn = (x) => `<button class="file" type="button" data-act="doc" data-doc="${esc(x.p)}"><span class="t">${esc(x.t)}</span><span class="d">${esc(x.p)}</span></button>`;
+  const refs = meta ? `<div class="refs"><div class="plain-h section-gap">Referências</div>
+    <div class="refgroup"><div class="meta">Referenciado por ${nf.format(back.length)}</div>${back.slice(0, 12).map(refBtn).join("") || `<p class="meta">Nenhum documento aponta para este.</p>`}${back.length > 12 ? `<p class="meta">+${back.length - 12}</p>` : ""}</div>
+    <div class="refgroup"><div class="meta">Aponta para ${nf.format(outb.length)}</div>${outb.slice(0, 12).map(refBtn).join("") || `<p class="meta">Este documento não aponta para outro.</p>`}${outb.length > 12 ? `<p class="meta">+${outb.length - 12}</p>` : ""}</div></div>` : "";
   const article = `
     <div class="crumb"><a href="#" data-act="back-doc">‹ ${esc(coll.name)}</a></div>
     <div class="doc-title">${esc(meta ? meta.title : r.doc.split("/").pop())}</div>
     <div class="meta">${esc(r.doc)}${meta ? " · " + nf.format(meta.size) + " bytes · " + esc(meta.date) : ""}${meta && meta.truncated ? " · trecho (arquivo grande)" : ""}</div>
+    <div class="meta">${last ? `último commit ${esc(last.hash)} · ${esc(last.date)} · ${esc(last.subject)}` : meta ? "sem commit para este arquivo" : ""}
+      ${last ? `<button class="linkbtn" type="button" data-act="history" data-doc="${esc(r.doc)}">Histórico</button>` : ""}</div>
     <div class="actions">
       <button class="btn sm" type="button" data-act="copy" data-what="Caminho" data-copy="${esc(r.doc)}">Copiar caminho</button>
       <button class="btn sm" type="button" data-act="copy" data-what="Referência" data-copy="${esc(r.doc)}:1">Copiar referência</button>
       <button class="btn sm" type="button" data-act="graph-doc" data-doc="${esc(r.doc)}">Grafo</button>
       <button class="btn sm" type="button" data-act="path-doc" data-doc="${esc(r.doc)}">Caminho</button>
+      <button class="btn sm" type="button" data-act="history" data-doc="${esc(r.doc)}">Histórico</button>
     </div>
-    ${body}`;
+    ${toc}
+    ${body}
+    ${refs}`;
 
   const around = r.around || { files: [], total: r.total };
   const aside = `<div class="listhead"><a class="linkbtn" href="#" data-act="nav-back">‹ Coleções</a><span class="meta">${nf.format(around.total || 0)}</span></div>
@@ -536,6 +551,7 @@ async function openDoc(p, line) {
     S.read.coll = doc.coll || S.read.coll;
     S.read.docMeta = doc;
     S.read.docHtml = mdToHtml(doc.text || "", p);
+    S.read.outline = outlineOf(S.read.docHtml);
     S.read.around = around;
     pushRecent(doc);
   } catch (e) {
@@ -545,6 +561,42 @@ async function openDoc(p, line) {
   render();
 }
 
+function outlineOf(html) {
+  const d = document.createElement("div");
+  d.innerHTML = html;
+  return [...d.querySelectorAll("h3, h4, h5")]
+    .map((h) => ({ id: h.id, level: Number(h.tagName.slice(1)), text: h.textContent.trim() }))
+    .filter((h) => h.id && h.text);
+}
+
+let tocRaf = 0;
+function syncToc() {
+  if (S.view !== "read" || !S.read.doc || !S.read.outline || !S.read.outline.length) return;
+  const content = $("#content");
+  if (!content) return;
+  const top = content.getBoundingClientRect().top + 64;
+  let active = "";
+  for (const h of S.read.outline) {
+    const el = document.getElementById(h.id);
+    if (!el) continue;
+    if (el.getBoundingClientRect().top <= top) active = h.id;
+    else break;
+  }
+  document.querySelectorAll(".tocbar [data-toc]").forEach((b) => {
+    if (b.dataset.toc === active) b.setAttribute("aria-current", "true");
+    else b.removeAttribute("aria-current");
+  });
+}
+
+async function openHistory(path) {
+  openDialog("history", { loading: true, data: null, path });
+  try {
+    S.dialog.data = await call("/history?path=" + encodeURIComponent(path));
+  } catch (e) { S.dialog.error = e.message; }
+  S.dialog.loading = false;
+  renderDialog();
+}
+
 function backFromDoc() {
   const coll = S.read.coll;
   S.read.doc = null;
@@ -552,6 +604,7 @@ function backFromDoc() {
   S.read.docMeta = null;
   S.read.docHtml = "";
   S.read.docError = "";
+  S.read.outline = [];
   S.read.around = null;
   render();
   if (coll && !S.read.files.length) void openCollection(coll);
@@ -1647,6 +1700,12 @@ function renderDialog() {
   } else if (d.kind === "archive") {
     html = dialogHeader("Arquivar notas velhas", "Move notas com mais de 30 dias para o arquivo; nada é apagado.")
       + (d.error ? `<div class="err">${esc(d.error)}</div>` : "") + dialogFoot("Arquivar", true);
+  } else if (d.kind === "history") {
+    const r = d.data || { commits: [] };
+    const rows = (r.commits || []).map((c) => `<div class="covarea"><div class="grow"><span class="mono">${esc(c.hash)}</span> · <span class="meta">${esc(c.date)}</span> · ${esc(c.subject)}</div>
+      <button class="linkbtn" type="button" data-act="copy" data-what="Hash" data-copy="${esc(c.hash)}">Copiar</button></div>`).join("");
+    html = dialogHeader("Histórico", esc(d.path || "")) + (rows || `<p class="meta">Sem commits para este arquivo.</p>`)
+      + `<div class="foot"><button class="btn" type="button" data-act="dlg-cancel">Fechar</button></div>`;
   } else if (d.kind === "log") {
     html = dialogHeader(d.data && d.data.label ? d.data.label : "Saída", d.data ? `${d.data.cmd} · ${d.data.status}${d.data.verdict ? " · " + d.data.verdict : ""}` : "")
       + `<pre class="log">${esc((d.data && d.data.tail) || "Sem saída ainda.")}</pre>`
@@ -1821,6 +1880,8 @@ document.addEventListener("click", (e) => {
   if (act === "pulse-refresh") { void preparePulse(); return; }
   if (act === "pulse-focus") { const el = document.getElementById(t.dataset.target); if (el) el.scrollIntoView({ block: "start" }); return; }
   if (act === "pulse-graph") { void prepareGraph("hubs", ""); return; }
+  if (act === "toc") { const el = document.getElementById(t.dataset.id); if (el) el.scrollIntoView({ block: "start" }); return; }
+  if (act === "history") { void openHistory(t.dataset.doc); return; }
   if (act === "path-docs-retry") { S.graph.docs = null; S.graph.pathError = ""; void loadPathDocs(); return; }
   if (act === "path-run") { void runPath(); return; }
   if (act === "path-swap") { swapPath(); return; }
@@ -1922,6 +1983,11 @@ function init() {
   });
   $("#overlay").addEventListener("click", (e) => { if (e.target === $("#overlay")) closeDialog(); });
   window.addEventListener("resize", () => { if (S.view === "graph" && S.graph.data) drawGraph(); });
+  const scroller = $("#content");
+  if (scroller) scroller.addEventListener("scroll", () => {
+    if (tocRaf) return;
+    tocRaf = requestAnimationFrame(() => { tocRaf = 0; syncToc(); });
+  });
   void boot();
 }
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="docboard-version" content="0.8.0">
+<meta name="docboard-version" content="0.9.0">
 <title>Docs</title>
 <link rel="stylesheet" href="../__picode/tokens.css">
 <style>
@@ -131,6 +131,15 @@
   .doc-title { font-family: var(--font-sans), system-ui, sans-serif; font-size: 22px; line-height: 1.25; font-weight: 650; margin: 2px 0 3px; letter-spacing: -.01em; }
   .actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 14px; }
 
+  .tocbar { position: sticky; top: 0; z-index: 5; display: flex; gap: 6px; overflow-x: auto; padding: 7px 0; margin: 0 0 12px; border-bottom: 1px solid var(--border); background: var(--bg-panel); }
+  .toclabel { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-secondary); align-self: center; flex: none; padding-right: 4px; white-space: nowrap; }
+  .tocchip { font-size: 11px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-base); color: var(--text-secondary); padding: 3px 8px; white-space: nowrap; cursor: pointer; font-family: inherit; flex: none; max-width: 230px; overflow: hidden; text-overflow: ellipsis; }
+  .tocchip[aria-current="true"] { color: var(--text-primary); border-color: var(--accent); background: var(--accent-soft); }
+  .tocchip.l4 { padding-left: 10px; }
+  .tocchip.l5 { opacity: .85; }
+  .refs { margin-top: 10px; }
+  .refgroup { margin-top: 8px; }
+  .reader h3, .reader h4, .reader h5 { scroll-margin-top: 56px; }
   .reader { font-family: var(--font-sans), system-ui, sans-serif; font-size: 15px; line-height: 1.65; max-width: 74ch; color: var(--text-primary); overflow-wrap: break-word; }
   .reader h2, .reader h3 { font-size: 1.5em; line-height: 1.25; margin: 24px 0 16px; font-weight: 600; letter-spacing: normal; padding-bottom: .3em; border-bottom: 1px solid var(--border); }
   .reader h4 { font-size: 1.25em; line-height: 1.25; margin: 24px 0 16px; font-weight: 600; }

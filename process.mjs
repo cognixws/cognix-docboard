@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn, execFileSync } from "node:child_process";
-import { buildCorpus, sortedFor, searchCorpus, catalog, findCommand, commandPlan, COLLECTIONS, egoGraph, hubGraph, collectionGraph, pulseOf, changeObligations, coverageOf, repairLinks, shortestPath } from "./lib.mjs";
+import { buildCorpus, sortedFor, searchCorpus, catalog, findCommand, commandPlan, COLLECTIONS, egoGraph, hubGraph, collectionGraph, pulseOf, changeObligations, coverageOf, repairLinks, shortestPath, backlinksOf } from "./lib.mjs";
 
 const PORT = Number(process.env.PICODE_EXT_PORT || 8799);
 const EXT_DIR = process.env.PICODE_EXT_DIR || process.cwd();
@@ -361,6 +361,15 @@ function readBody(req, max = 1 << 20) {
   });
 }
 
+function lastCommitOf(rel) {
+  try {
+    const out = git(["log", "-1", "--date=short", "--pretty=format:%h\t%ad\t%s", "--", rel], repo, 3000).trim();
+    if (!out) return null;
+    const parts = out.split("\t");
+    return { hash: parts[0] || "", date: parts[1] || "", subject: parts.slice(2).join("\t") };
+  } catch { return null; }
+}
+
 function docOf(c, rel) {
   if (!c.text.has(rel)) return null;
   const f = c.files.find((x) => x.p === rel) || {};
@@ -446,7 +455,25 @@ const server = http.createServer(async (req, res) => {
     if (p === "/doc") {
       const d = docOf(c, String(q.get("path") || ""));
       if (!d) return json(res, 404, { error: "esse documento não está no índice" });
-      return json(res, 200, d);
+      const refs = backlinksOf(c.graph, d.path);
+      return json(res, 200, {
+        ...d,
+        backlinks: refs.backlinks.slice(0, 40),
+        outbound: refs.outbound.slice(0, 40),
+        lastCommit: lastCommitOf(d.path),
+      });
+    }
+
+    if (p === "/history") {
+      const rel = String(q.get("path") || "");
+      if (!c.text.has(rel)) return json(res, 404, { error: "esse documento não está no índice" });
+      let out = "";
+      try { out = git(["log", "-5", "--date=short", "--pretty=format:%h\t%ad\t%s", "--", rel], repo, 4000); } catch { /* none */ }
+      const commits = out.split("\n").filter(Boolean).map((line) => {
+        const parts = line.split("\t");
+        return { hash: parts[0] || "", date: parts[1] || "", subject: parts.slice(2).join("\t") };
+      });
+      return json(res, 200, { path: rel, commits });
     }
 
     if (p === "/open") {
