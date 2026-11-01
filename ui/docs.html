@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="docboard-version" content="0.13.0">
+<meta name="docboard-version" content="0.13.1">
 <title>Docs</title>
 <link rel="stylesheet" href="../__picode/tokens.css">
 <style>
@@ -212,6 +212,11 @@
   .graphlist button:hover { background: var(--bg-base); }
   .graphlist .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .graphlist .d { font-size: 10.5px; color: var(--text-secondary); white-space: nowrap; }
+  .docdiff { margin: 0; max-height: 50vh; overflow: auto; background: var(--bg-base); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-family: var(--mono), ui-monospace, monospace; font-size: 11.5px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .docdiff .add { color: var(--ok); }
+  .docdiff .del { color: var(--danger); }
+  .docdiff .hunk { color: var(--accent); }
+  .docdiff .meta { color: var(--text-secondary); }
   .queuebar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--border); background: var(--bg-panel); margin-bottom: 8px; }
   .queueitem { display: flex; align-items: flex-start; gap: 9px; padding: 7px 2px; border-bottom: 1px solid var(--border); cursor: pointer; }
   .queueitem input { margin-top: 3px; accent-color: var(--accent-fill); flex: none; }
