@@ -58,6 +58,44 @@ function hostGet(p) {
   });
 }
 
+function hostPost(p, body) {
+  return new Promise((resolve, reject) => {
+    if (!HOST || !TOKEN) return reject(new Error("Host API indisponível"));
+    const u = new URL(p, HOST);
+    const isTls = u.protocol === "https:";
+    const mod = isTls ? https : http;
+    const data = JSON.stringify(body || {});
+    const opts = {
+      method: "POST",
+      headers: {
+        "X-PiCode-Extension-Token": TOKEN,
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(data),
+      },
+    };
+    if (isTls && CA) { try { opts.ca = fs.readFileSync(CA); } catch { /* default store */ } }
+    const req = mod.request(u, opts, (res) => {
+      let b = "";
+      res.setEncoding("utf8");
+      res.on("data", (d) => { b += d; });
+      res.on("end", () => {
+        let parsed = {};
+        try { parsed = JSON.parse(b || "{}"); } catch { /* text */ }
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          const err = new Error(parsed.error || ("Host API " + res.statusCode));
+          err.status = res.statusCode;
+          return reject(err);
+        }
+        resolve(parsed);
+      });
+    });
+    req.on("error", reject);
+    req.setTimeout(8000, () => req.destroy(new Error("Host API timeout")));
+    req.write(data);
+    req.end();
+  });
+}
+
 async function loadSettings() {
   try { settings = await hostGet("/api/ext/v1/settings"); } catch { /* defaults */ }
 }
@@ -478,6 +516,31 @@ const server = http.createServer(async (req, res) => {
 
     if (p === "/open") {
       return json(res, 200, openPage(c, String(q.get("tab") || "all"), q.get("q") || "", q.get("offset"), q.get("limit")));
+    }
+
+    if (p === "/agents") {
+      try {
+        const r = await hostGet("/api/ext/v1/agents");
+        return json(res, 200, { agents: r.agents || [] });
+      } catch (e) {
+        return json(res, 503, { error: e.message });
+      }
+    }
+
+    if (p === "/message" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse((await readBody(req)) || "{}"); } catch { return json(res, 400, { error: "corpo inválido" }); }
+      const to = String(body.to || "").trim();
+      const text = String(body.text || "").trim();
+      if (!to) return json(res, 400, { error: "escolha um agente" });
+      if (!text) return json(res, 400, { error: "escreva a mensagem" });
+      if (text.length > 4000) return json(res, 400, { error: "a mensagem passa de 4000 caracteres" });
+      try {
+        const r = await hostPost("/api/ext/v1/messages", { to, text });
+        return json(res, 200, { ok: true, to: r.to || null, messageId: r.message && r.message.id || "" });
+      } catch (e) {
+        return json(res, e.status === 409 ? 409 : 503, { error: e.message });
+      }
     }
 
     if (p === "/docs") {

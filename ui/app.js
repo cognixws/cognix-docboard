@@ -6,6 +6,41 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const nf = new Intl.NumberFormat("pt-BR");
 const ROOT = new Set(["AGENTS.md", "README.md", "CONTRIBUTING.md", "CHANGELOG.md", "Makefile"]);
+const MSG_CTX = new Map();
+let msgSeq = 0;
+function msgCtx(ctx) { const id = "m" + (++msgSeq); MSG_CTX.set(id, ctx); return id; }
+function ctxLabel(ctx) {
+  if (!ctx) return "";
+  if (ctx.kind === "link") return ctx.from + " -> " + ctx.target;
+  if (ctx.kind === "obligation") return ctx.title;
+  if (ctx.kind === "coverage") return "área " + ctx.area;
+  if (ctx.kind === "stale") return ctx.path;
+  if (ctx.kind === "doc") return ctx.path;
+  return ctx.kind;
+}
+function messageFor(ctx) {
+  const repo = S.overview ? S.overview.repo : "";
+  if (!ctx) return "";
+  if (ctx.kind === "link") {
+    let t = `No repositório ${repo}, o link em ${ctx.from} aponta para ${ctx.target}, que não existe no índice.`;
+    if (ctx.suggestion) t += ` Sugestão: ${ctx.suggestion.path} (link relativo ${ctx.suggestion.link}).`;
+    return t + " Corrija o arquivo, rode docs-check e responda com o commit.";
+  }
+  if (ctx.kind === "obligation") {
+    let t = `No worktree ${ctx.worktree || repo} (${ctx.branch || "sem branch"}), a mudança pede: ${ctx.title}. ${ctx.why || ""}`;
+    if ((ctx.evidence || []).length) t += ` Evidência: ${ctx.evidence.slice(0, 5).join(", ")}.`;
+    if ((ctx.targets || []).length) t += ` Alvos: ${ctx.targets.map((x) => x.path).slice(0, 5).join(", ")}.`;
+    return t + " Faça o que falta, rode os gates e responda com o commit.";
+  }
+  if (ctx.kind === "coverage") {
+    return `No repositório ${repo}, a área ${ctx.area} (${ctx.kindLabel || "código"} · ${ctx.files} arquivos) não tem doc de arquitetura mapeado. Crie ou atualize docs/architecture/${ctx.area}.md, rode docs-check e responda com o commit.`;
+  }
+  if (ctx.kind === "stale") {
+    return `O documento ${ctx.path} está sem commit há ${ctx.age} dias. Atualize o que estiver defasado, rode docs-check/vale e responda com o commit.`;
+  }
+  if (ctx.kind === "doc") return `Sobre ${ctx.path}: `;
+  return "";
+}
 
 let api = null;
 async function getApi() {
@@ -288,7 +323,8 @@ function syncChrome() {
   if (elTitle) elTitle.textContent = title;
   if (elSub) elSub.textContent = sub;
   const actions = $("#tb-actions");
-  if (actions) actions.innerHTML = S.view === "read" ? `<button class="btn" type="button" data-act="open-change">Para esta mudança</button>` : "";
+  const msgBtn = `<button class="btn" type="button" data-act="msg-general">Mensagem</button>`;
+  if (actions) actions.innerHTML = msgBtn + (S.view === "read" ? `<button class="btn" type="button" data-act="open-change">Para esta mudança</button>` : "");
   const input = $("#global-search");
   if (input) {
     input.placeholder = `Buscar em ${nf.format(S.stats.docs || 0)} docs…`;
@@ -486,6 +522,7 @@ function renderRead() {
       <button class="btn sm" type="button" data-act="graph-doc" data-doc="${esc(r.doc)}">Grafo</button>
       <button class="btn sm" type="button" data-act="path-doc" data-doc="${esc(r.doc)}">Caminho</button>
       <button class="btn sm" type="button" data-act="history" data-doc="${esc(r.doc)}">Histórico</button>
+      <button class="btn sm" type="button" data-act="msg-doc" data-doc="${esc(r.doc)}">Mensagem</button>
     </div>
     ${toc}
     ${body}
@@ -586,6 +623,50 @@ function syncToc() {
     if (b.dataset.toc === active) b.setAttribute("aria-current", "true");
     else b.removeAttribute("aria-current");
   });
+}
+
+async function openMessage(ctx) {
+  const d = {
+    kind: "message", loading: true, agents: [], to: "",
+    text: ctx ? messageFor(ctx) : "", context: ctx || null, error: "", sending: false,
+  };
+  S.dialog = d;
+  $("#overlay").classList.add("open");
+  renderDialog();
+  try {
+    const r = await call("/agents");
+    d.agents = r.agents || [];
+    const first = d.agents.find((a) => a.running) || d.agents[0];
+    d.to = first ? first.id : "";
+  } catch (e) { d.error = e.message; }
+  d.loading = false;
+  renderDialog();
+  requestAnimationFrame(() => { const ta = $("#msg-text"); if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } });
+}
+
+async function sendMessage() {
+  const d = S.dialog;
+  if (!d || d.kind !== "message" || d.sending) return;
+  const to = ($("#msg-to") || {}).value || d.to;
+  const text = (($("#msg-text") || {}).value || "").trim();
+  if (!to) { d.error = "Escolha um agente."; renderDialog(); return; }
+  if (!text) { d.error = "Escreva a mensagem."; renderDialog(); return; }
+  d.to = to;
+  d.text = text;
+  d.sending = true;
+  d.error = "";
+  renderDialog();
+  try {
+    const r = await post("/message", { to, text });
+    const agent = (d.agents || []).find((a) => a.id === to) || {};
+    const name = agent.name || (r.to && r.to.name) || "agente";
+    closeDialog();
+    toast("Mensagem entregue a " + name + ".");
+  } catch (e) {
+    d.sending = false;
+    d.error = e.message;
+    renderDialog();
+  }
 }
 
 async function openHistory(path) {
@@ -970,7 +1051,8 @@ function renderLinks() {
       .slice().sort((a, b) => ((b.suggestions || []).length > 0 ? 1 : 0) - ((a.suggestions || []).length > 0 ? 1 : 0));
     if (!links.length) return "";
     const rows = links.map((x) => {
-      const sug = (x.suggestions || []).map((s) => `${s.exact ? "" : '<span class="tag owner">revisar</span>'}<button class="btn sm" type="button" data-act="doc" data-doc="${esc(s.path)}">${esc(s.title.length > 40 ? s.title.slice(0, 38) + "…" : s.title)}</button><button class="linkbtn" type="button" data-act="copy" data-what="Link" data-copy="${esc(s.link)}" title="Copiar ${esc(s.link)}">Copiar link</button>`).join("");
+      const cid = msgCtx({ kind: "link", from: o.from, target: x.target, suggestion: (x.suggestions || [])[0] || null });
+      const sug = (x.suggestions || []).map((s) => `${s.exact ? "" : '<span class="tag owner">revisar</span>'}<button class="btn sm" type="button" data-act="doc" data-doc="${esc(s.path)}">${esc(s.title.length > 40 ? s.title.slice(0, 38) + "…" : s.title)}</button><button class="linkbtn" type="button" data-act="copy" data-what="Link" data-copy="${esc(s.link)}" title="Copiar ${esc(s.link)}">Copiar link</button>`).join("") + `<button class="linkbtn" type="button" data-act="msg-open" data-msg="${cid}">Pedir conserto</button>`;
       return `<div class="alertrow" style="align-items:flex-start"><span class="dot bad"></span>
         <div class="grow"><span class="mono">${esc(x.target)}</span>${x.normalized !== x.target ? ` <span class="meta">→ ${esc(x.normalized)}</span>` : ""}
           <div class="acts" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">${sug || `<span class="meta">Sem candidato interno; pode ser um link da docs-site.</span>`}</div>
@@ -1032,8 +1114,12 @@ function renderCoverage() {
     ? `<div class="kpi"><div class="v">${k.v}</div><div class="l">${esc(k.l)}</div><div class="c">${esc(k.c)}</div></div>`
     : `<button class="kpi" type="button" data-act="${k.act}" data-target="${k.target}"><div class="v">${k.v}</div><div class="l">${esc(k.l)}</div><div class="c">${esc(k.c)}</div></button>`).join("");
   const missingAll = [...(d.missing || [])].sort((a, b) => b.files - a.files);
-  const missing = missingAll.slice(0, 16).map((a) => `<div class="covarea"><div class="grow"><div class="name">${esc(a.name)} <span class="meta">${esc(a.kind)} · ${nf.format(a.files)} arquivos</span></div></div>
-    <button class="btn sm" type="button" data-act="copy" data-what="Caminho" data-copy="${esc("docs/architecture/" + a.name + ".md")}">Copiar caminho sugerido</button></div>`).join("");
+  const missing = missingAll.slice(0, 16).map((a) => {
+    const cid = msgCtx({ kind: "coverage", area: a.name, kindLabel: a.kind, files: a.files });
+    return `<div class="covarea"><div class="grow"><div class="name">${esc(a.name)} <span class="meta">${esc(a.kind)} · ${nf.format(a.files)} arquivos</span></div></div>
+    <button class="btn sm" type="button" data-act="copy" data-what="Caminho" data-copy="${esc("docs/architecture/" + a.name + ".md")}">Copiar caminho sugerido</button>
+    <button class="linkbtn" type="button" data-act="msg-open" data-msg="${cid}">Pedir doc</button></div>`;
+  }).join("");
   const missingMore = missingAll.length > 16 ? `<p class="meta">+${missingAll.length - 16} áreas menores seguem o mesmo padrão docs/architecture/&lt;área&gt;.md.</p>` : "";
   const coveredAll = (d.areas || []).filter((a) => a.covered).sort((a, b) => b.files - a.files || a.name.localeCompare(b.name));
   const areas = coveredAll.slice(0, 30).map(coverageRow).join("");
@@ -1120,13 +1206,16 @@ function renderChange() {
   const groups = CHANGE_GROUPS.map(([kind, label]) => {
     const obs = d.obligations.filter((o) => o.kind === kind);
     if (!obs.length) return "";
-    const rows = obs.map((o) => `
+    const rows = obs.map((o) => {
+      const cid = msgCtx({ kind: "obligation", title: o.title, why: o.why, evidence: o.evidence, targets: o.targets, worktree: d.worktree, branch: d.branch });
+      return `
       <div class="obligation"><div class="head">
         <div class="grow"><div class="ttl">${esc(o.title)} ${o.status === "note" ? '<span class="tag">conferir</span>' : o.confidence === "check" ? '<span class="tag owner">revisar</span>' : ""}</div>
           <div class="why">${esc(o.why)}</div>
           <div class="ev">${esc((o.evidence || []).slice(0, 3).join(" · "))}${(o.evidence || []).length > 3 ? " · +" + (o.evidence.length - 3) : ""}</div></div>
       </div>
-      <div class="acts">${(o.targets || []).map((t) => changeTarget(t.path, t.label)).join("")}${o.action === "operar" ? `<button class="btn sm" type="button" data-act="view" data-view="operar">Abrir Operar</button>` : ""}</div></div>`).join("");
+      <div class="acts">${(o.targets || []).map((t) => changeTarget(t.path, t.label)).join("")}${o.action === "operar" ? `<button class="btn sm" type="button" data-act="view" data-view="operar">Abrir Operar</button>` : ""}<button class="btn sm" type="button" data-act="msg-open" data-msg="${cid}">Pedir ao agente</button></div></div>`;
+    }).join("");
     return `<div class="cmdgroup">${esc(label)}</div>${rows}`;
   }).join("");
   return `${head}
@@ -1175,8 +1264,12 @@ function renderPulse() {
     <div class="alertrow"><span class="dot bad"></span><span class="grow">${esc(b.fromTitle)} → <span class="mono">${esc(b.target)}</span></span>
       <button class="linkbtn" type="button" data-act="copy" data-what="Destino" data-copy="${esc(b.target)}">Copiar destino</button>
       <button class="btn sm" type="button" data-act="doc" data-doc="${esc(b.from)}">Abrir origem</button></div>`).join("");
-  const stale = (d.stale || []).map((s) => `<button class="file" type="button" data-act="doc" data-doc="${esc(s.p)}">
-      <span class="t">${esc(s.t)}</span><span class="d">${s.age} dias · ${esc((S.collections.find((c) => c.id === s.c) || {}).name || s.c)}</span></button>`).join("");
+  const stale = (d.stale || []).map((s) => {
+    const cid = msgCtx({ kind: "stale", path: s.p, age: s.age });
+    return `<div class="row" style="align-items:center"><button class="file" type="button" data-act="doc" data-doc="${esc(s.p)}" style="flex:1">
+      <span class="t">${esc(s.t)}</span><span class="d">${s.age} dias · ${esc((S.collections.find((c) => c.id === s.c) || {}).name || s.c)}</span></button>
+      <button class="linkbtn" type="button" data-act="msg-open" data-msg="${cid}">Pedir atualização</button></div>`;
+  }).join("");
   return `<div class="row" style="margin-bottom:10px"><span class="meta">${esc(d.repo || "")}</span><span class="spacer"></span>
       <button class="linkbtn" type="button" data-act="pulse-graph">Abrir grafo</button>
       <button class="btn sm" type="button" data-act="pulse-refresh">Atualizar</button></div>
@@ -1700,6 +1793,22 @@ function renderDialog() {
   } else if (d.kind === "archive") {
     html = dialogHeader("Arquivar notas velhas", "Move notas com mais de 30 dias para o arquivo; nada é apagado.")
       + (d.error ? `<div class="err">${esc(d.error)}</div>` : "") + dialogFoot("Arquivar", true);
+  } else if (d.kind === "message") {
+    const agents = d.agents || [];
+    let body;
+    if (d.loading) body = `<div class="sk" style="width:50%"></div><div class="sk" style="width:85%"></div><div class="sk" style="width:70%"></div>`;
+    else if (d.error && !agents.length) body = `<div class="empty"><b>Não consegui listar os agentes.</b><p>${esc(d.error)}</p></div><div class="foot"><button class="btn" type="button" data-act="dlg-cancel">Fechar</button></div>`;
+    else if (!agents.length) body = `<div class="empty"><b>Nenhum agente disponível.</b><p>Crie um agente no workspace para receber o pedido.</p></div><div class="foot"><button class="btn" type="button" data-act="dlg-cancel">Fechar</button></div>`;
+    else {
+      const opts = agents.map((a) => `<option value="${esc(a.id)}" ${a.id === d.to ? "selected" : ""}>${esc(a.name)} · ${esc(a.cli || "")} · ${esc(a.state || (a.running ? "rodando" : "parado"))}</option>`).join("");
+      body = `<label class="meta" for="msg-to">Agente</label><select id="msg-to" class="field">${opts}</select>
+        <label class="meta" for="msg-text" style="display:block;margin-top:8px">Mensagem</label>
+        <textarea id="msg-text" class="field" style="height:150px;padding:8px 10px;resize:vertical">${esc(d.text || "")}</textarea>
+        ${d.context ? `<p class="meta">Contexto: ${esc(ctxLabel(d.context))}</p>` : ""}
+        ${d.error ? `<p class="err">${esc(d.error)}</p>` : ""}
+        <div class="foot"><button class="btn" type="button" data-act="dlg-cancel">Cancelar</button><button class="btn primary" type="button" data-act="msg-send" ${d.sending ? "disabled" : ""}>${d.sending ? "Enviando…" : "Enviar"}</button></div>`;
+    }
+    html = dialogHeader("Mensagem a um agente", "O agente recebe de Docboard; a extensão não escreve nos arquivos.") + body;
   } else if (d.kind === "history") {
     const r = d.data || { commits: [] };
     const rows = (r.commits || []).map((c) => `<div class="covarea"><div class="grow"><span class="mono">${esc(c.hash)}</span> · <span class="meta">${esc(c.date)}</span> · ${esc(c.subject)}</div>
@@ -1880,6 +1989,10 @@ document.addEventListener("click", (e) => {
   if (act === "pulse-refresh") { void preparePulse(); return; }
   if (act === "pulse-focus") { const el = document.getElementById(t.dataset.target); if (el) el.scrollIntoView({ block: "start" }); return; }
   if (act === "pulse-graph") { void prepareGraph("hubs", ""); return; }
+  if (act === "msg-general") { void openMessage(null); return; }
+  if (act === "msg-doc") { void openMessage({ kind: "doc", path: t.dataset.doc }); return; }
+  if (act === "msg-open") { const ctx = MSG_CTX.get(t.dataset.msg); if (ctx) void openMessage(ctx); return; }
+  if (act === "msg-send") { void sendMessage(); return; }
   if (act === "toc") { const el = document.getElementById(t.dataset.id); if (el) el.scrollIntoView({ block: "start" }); return; }
   if (act === "history") { void openHistory(t.dataset.doc); return; }
   if (act === "path-docs-retry") { S.graph.docs = null; S.graph.pathError = ""; void loadPathDocs(); return; }

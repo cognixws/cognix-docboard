@@ -32,6 +32,15 @@ The index is built in memory by the extension's own process and refreshed on
 demand or after five minutes. No database, no backup promise: the repository
 is the source of truth.
 
+## Message an agent
+
+A person can list the agents (`agents:read`) and send one of them a message
+(`messages:send`) from the docs panel: pick the agent, edit the prefilled
+context (a broken link, an obligation, an uncovered area, a stale doc or the
+open document), and send. The agent receives it from `ext:docboard`; the
+extension never writes, declares no agent tool and sends nothing on its own.
+A stopped agent is refused by the host.
+
 ## Reader
 
 The document reader has "Nesta página" (a sticky outline of headings), the

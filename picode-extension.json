@@ -1,12 +1,12 @@
 {
   "id": "docboard",
   "name": "Docboard",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "apiVersion": 10,
   "publisher": "COGNIX[WS]",
   "description": "The repository's docs in the bottom dock: read, search, see what is open, and operate the development environment. Person-only; no agent tool.",
   "icon": "icon.svg",
-  "permissions": ["workspaces:read"],
+  "permissions": ["workspaces:read", "agents:read", "messages:send"],
   "settings": [
     {
       "key": "repo_path",
