@@ -893,6 +893,42 @@ export function repairLinks(corpus) {
   };
 }
 
+
+/* ---------------- ask (local passages) ---------------- */
+
+export function askChunks(corpus, { max = 1400, collections = ["decisions", "plans", "architecture", "benchmarks", "books", "docsroot"] } = {}) {
+  const set = new Set(collections);
+  const out = [];
+  for (const f of corpus.files) {
+    if (!set.has(f.c)) continue;
+    const text = corpus.text.get(f.p) || "";
+    if (!text) continue;
+    const lines = text.split("\n");
+    let heading = f.t;
+    let buf = [];
+    let start = 1;
+    let len = 0;
+    const flush = () => {
+      if (!buf.length) return;
+      const body = buf.join("\n").trim();
+      if (body && body.length >= 40) out.push({ p: f.p, t: f.t, c: f.c, h: heading, l: start, x: body.slice(0, max) });
+      buf = [];
+      len = 0;
+    };
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const h = /^(#{1,4})\s+(.*)$/.exec(line);
+      if (h) { flush(); heading = h[1].length > 1 ? h[2].trim() : f.t; start = i + 2; continue; }
+      if (!line.trim()) { if (len > 0 && len + line.length > max) flush(); else { buf.push(line); len += 1; } continue; }
+      buf.push(line);
+      len += line.length + 1;
+      if (len > max) flush();
+    }
+    flush();
+  }
+  return out;
+}
+
 /* ---------------- search ---------------- */
 
 const STOP = new Set(["por", "que", "o", "a", "os", "as", "de", "do", "da", "dos", "das", "um", "uma", "e", "é", "em", "no", "na", "não", "se", "para", "com", "como", "quando", "the", "of", "to", "and", "in", "is", "on", "for", "with", "an"]);

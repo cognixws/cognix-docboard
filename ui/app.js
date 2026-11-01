@@ -77,6 +77,8 @@ async function post(p, data) {
 
 /* ---------------- state ---------------- */
 
+const ASK_COLLECTIONS = ["decisions", "plans", "architecture", "benchmarks", "books", "docsroot"];
+
 const S = {
   ready: false,
   error: "",
@@ -91,7 +93,7 @@ const S = {
   lastKey: "",
   focusOpen: false,
   read: { coll: null, doc: null, line: null, files: [], total: 0, loading: false, around: null, docMeta: null, docHtml: "", docLoading: false, docError: "", outline: [] },
-  search: { q: "", f: "all", busy: false, ran: false, files: [], open: [], err: "" },
+  search: { q: "", f: "all", busy: false, ran: false, files: [], open: [], err: "", mode: "lexical", sem: { state: "idle", done: 0, total: 0, results: [], error: "", busy: false, poll: null }, askTimer: null },
   open: { tab: "all", q: "", offset: 0, questions: [], debts: [], counts: {}, loading: false },
   operar: { groups: [], enabled: false, filter: "", group: "all", runs: [], loading: false, timer: null, worktrees: null },
   health: { data: null, loading: false, error: "", allRunning: false },
@@ -301,8 +303,11 @@ function syncChrome() {
     else if (S.read.coll) { const c = S.collections.find((x) => x.id === S.read.coll); title = c ? c.name : "Read"; sub = c ? nf.format(c.n) + " arquivos" : ""; }
     else { title = "Documentação"; sub = `${nf.format(S.stats.docs || 0)} arquivos · docs + raiz`; }
   } else if (S.view === "search") {
+    const sem = S.search.mode === "semantic";
     title = "Buscar";
-    sub = S.search.q ? `resultados para “${S.search.q}”` : "índice local · leitura no repositório";
+    sub = S.search.q ? `${sem ? "passagens" : "resultados"} para “${S.search.q}”` : "índice local · leitura no repositório";
+    const gs = $("#global-search");
+    if (gs) gs.placeholder = sem ? "Pergunte às docs…" : `Buscar em ${nf.format(S.stats.docs || 0)} docs…`;
   } else if (S.view === "open") {
     title = "Aberto";
     sub = `${nf.format(S.stats.questions || 0)} questões em ${S.stats.plansWithQuestions || 0} planos · ${nf.format(S.stats.debts || 0)} pendências em ${S.stats.openTopics || 0} tópicos`;
@@ -343,7 +348,7 @@ function syncChrome() {
   const msgBtn = `<button class="btn" type="button" data-act="msg-general">Mensagem</button>`;
   if (actions) actions.innerHTML = msgBtn + (S.view === "read" ? `<button class="btn" type="button" data-act="open-change">Para esta mudança</button>` : "");
   const input = $("#global-search");
-  if (input) {
+  if (input && S.search.mode !== "semantic") {
     input.placeholder = `Buscar em ${nf.format(S.stats.docs || 0)} docs…`;
     if (document.activeElement !== input) input.value = S.search.q || "";
   }
@@ -777,45 +782,133 @@ async function doSearch() {
 
 function renderSearch() {
   const s = S.search;
-  const filters = [{ id: "all", label: "Tudo" }].concat(S.collections.map((c) => ({ id: c.id, label: c.name })));
+  const filters = [{ id: "all", label: "Tudo" }].concat(S.collections.filter((c) => s.mode !== "semantic" || ASK_COLLECTIONS.includes(c.id)).map((c) => ({ id: c.id, label: c.name })));
   const chips = filters.map((f) => `<button type="button" data-act="sfilter" data-f="${esc(f.id)}" aria-pressed="${s.f === f.id}">${esc(f.label)}</button>`).join("");
+  const mode = `<div class="seg" style="margin-bottom:10px"><button type="button" data-act="search-mode" data-m="lexical" aria-pressed="${s.mode !== "semantic"}">Buscar</button><button type="button" data-act="search-mode" data-m="semantic" aria-pressed="${s.mode === "semantic"}">Perguntar</button></div>`;
   const clear = s.q ? `<button class="linkbtn" type="button" data-act="clear-search">Limpar busca</button>` : "";
   let status = "Digite no campo acima";
-  if (s.q) status = s.busy ? "Buscando…" : `${s.files.length} documento(s)`;
-  let results = "";
-  if (s.busy) {
-    results = `<div class="sk" style="width:38%"></div><div class="sk" style="width:76%"></div><div class="sk" style="width:44%;margin-top:14px"></div><div class="sk" style="width:68%"></div>`;
-  } else if (!s.ran) {
-    const ex = "por que o land não reinicia quando o close termina?";
-    results = `<div class="empty"><b>Busque por palavra ou por significado.</b>
-      <p>O índice cobre ${nf.format(S.stats.docs || 0)} arquivos do repositório. Os sinônimos PT/EN são locais.</p>
-      <button class="btn sm" type="button" data-act="example" data-q="${esc(ex)}">Experimentar: “${esc(ex)}”</button></div>`;
-  } else if (s.err) {
-    results = `<div class="empty"><b>A busca falhou.</b><p>${esc(s.err)}</p><button class="btn sm" type="button" data-act="retry-search">Tentar de novo</button></div>`;
-  } else if (!s.files.length && !s.open.length) {
-    results = `<div class="empty"><b>Nenhum resultado para “${esc(s.q)}”.</b>
-      <p>Nada no índice com essas palavras ou sinônimos.</p>
-      <button class="btn sm" type="button" data-act="search-all">Buscar em todo o repositório</button></div>`;
+  let results;
+  if (s.mode === "semantic") {
+    const sem = s.sem;
+    status = sem.state === "building" ? `Indexando ${nf.format(sem.done || 0)}/${nf.format(sem.total || 0)} trechos…`
+      : sem.state === "ready" ? `${nf.format((sem.results || []).length)} ${((sem.results || []).length === 1) ? "passagem" : "passagens"}`
+      : sem.state === "unavailable" ? "busca por significado indisponível"
+      : "pergunte em linguagem natural";
+    results = semanticResultsHtml();
   } else {
-    const rows = s.files.map((f, i) => `
-      <button class="result" type="button" data-act="result" data-i="${i}">
-        <span class="body"><span class="path">${esc(f.t)}</span>
-          <span class="where"> · ${esc((S.collections.find((c) => c.id === f.c) || {}).name || f.c)} · ${esc(f.p)}</span>
-          <div class="snip">${highlight(f.x, s.q)}</div></span>
-        <span class="go">Abrir</span></button>`).join("");
-    const openRows = s.open.length
-      ? `<div class="cmdgroup" style="margin-top:14px">Aberto (${s.open.length})</div>` + s.open.map((it, i) => `
-        <button class="result" type="button" data-act="open-result" data-i="${i}">
-          <span class="body"><span class="path">${esc(it.text.slice(0, 140))}${it.text.length > 140 ? "…" : ""}</span>
-            <span class="where"> · ${esc(it.where)}</span>
-            <div class="snip">${it.kind === "q" ? "questão em aberto" : "pendência"}${it.owner ? " · owner" : ""}</div></span>
-          <span class="go">Abrir na linha</span></button>`).join("")
-      : "";
-    results = (rows ? `<div class="results">${rows}</div>` : "") + openRows;
+    if (s.q) status = s.busy ? "Buscando…" : `${s.files.length} documento(s)`;
+    if (s.busy) {
+      results = `<div class="sk" style="width:38%"></div><div class="sk" style="width:76%"></div><div class="sk" style="width:44%;margin-top:14px"></div><div class="sk" style="width:68%"></div>`;
+    } else if (!s.ran) {
+      const ex = "por que o land não reinicia quando o close termina?";
+      results = `<div class="empty"><b>Busque por palavra ou por significado.</b>
+        <p>O índice cobre ${nf.format(S.stats.docs || 0)} arquivos do repositório. Os sinônimos PT/EN são locais.</p>
+        <button class="btn sm" type="button" data-act="example" data-q="${esc(ex)}">Experimentar: “${esc(ex)}”</button></div>`;
+    } else if (s.err) {
+      results = `<div class="empty"><b>A busca falhou.</b><p>${esc(s.err)}</p><button class="btn sm" type="button" data-act="retry-search">Tentar de novo</button></div>`;
+    } else if (!s.files.length && !s.open.length) {
+      results = `<div class="empty"><b>Nenhum resultado para “${esc(s.q)}”.</b>
+        <p>Nada no índice com essas palavras ou sinônimos.</p>
+        <button class="btn sm" type="button" data-act="search-all">Buscar em todo o repositório</button></div>`;
+    } else {
+      const rows = s.files.map((f, i) => `
+        <button class="result" type="button" data-act="result" data-i="${i}">
+          <span class="body"><span class="path">${esc(f.t)}</span>
+            <span class="where"> · ${esc((S.collections.find((c) => c.id === f.c) || {}).name || f.c)} · ${esc(f.p)}</span>
+            <div class="snip">${highlight(f.x, s.q)}</div></span>
+          <span class="go">Abrir</span></button>`).join("");
+      const openRows = s.open.length
+        ? `<div class="cmdgroup" style="margin-top:14px">Aberto (${s.open.length})</div>` + s.open.map((it, i) => `
+          <button class="result" type="button" data-act="open-result" data-i="${i}">
+            <span class="body"><span class="path">${esc(it.text.slice(0, 140))}${it.text.length > 140 ? "…" : ""}</span>
+              <span class="where"> · ${esc(it.where)}</span>
+              <div class="snip">${it.kind === "q" ? "questão em aberto" : "pendência"}${it.owner ? " · owner" : ""}</div></span>
+            <span class="go">Abrir na linha</span></button>`).join("")
+        : "";
+      results = (rows ? `<div class="results">${rows}</div>` : "") + openRows;
+    }
   }
-  return `<div class="seg" style="margin-bottom:10px">${chips}</div>
+  return `${mode}
+    <div class="seg" style="margin-bottom:10px">${chips}</div>
     <div class="row" style="margin-bottom:10px"><span class="meta">${status}</span><span class="spacer"></span>${clear}</div>
     <div id="results">${results}</div>`;
+}
+
+function semanticResultsHtml() {
+  const s = S.search;
+  const sem = s.sem;
+  if (sem.busy) return `<div class="sk" style="width:38%"></div><div class="sk" style="width:76%"></div><div class="sk" style="width:44%;margin-top:14px"></div><div class="sk" style="width:68%"></div>`;
+  if (!s.q.trim()) {
+    return `<div class="empty"><b>Pergunte em linguagem natural.</b><p>A busca por significado usa o modelo de embeddings que o Recall já mantém, local. O índice é construído na primeira pergunta.</p><button class="btn sm" type="button" data-act="example" data-q="por que o land não reinicia quando o close termina?">Experimentar</button></div>`;
+  }
+  if (sem.state === "building") {
+    const pct = sem.total ? Math.round((sem.done / sem.total) * 100) : 0;
+    return `<p class="meta">Indexando ${nf.format(sem.done || 0)} de ${nf.format(sem.total || 0)} trechos…</p>
+      <div class="progress" style="max-width:360px"><i style="width:${pct}%"></i></div>
+      <p class="meta" style="margin-top:8px">Cobre decisões, planos, arquitetura, benchmarks, books e a raiz das docs; o modelo roda local. Enquanto isso, <button class="linkbtn" type="button" data-act="search-mode" data-m="lexical">buscar por palavra</button>.</p>`;
+  }
+  if (sem.state === "unavailable") {
+    const e = sem.error || "";
+    const friendly = !e || e.includes("não foi encontrado")
+      ? (e || "O modelo de embeddings do Recall não foi encontrado.")
+      : /servidor de embeddings|não subiu|tempo esgotado/i.test(e)
+        ? "O modelo local não respondeu."
+        : "O índice local não pôde ser construído.";
+    return `<div class="empty"><b>Busca por significado indisponível.</b><p>${esc(friendly)}</p><button class="btn sm" type="button" data-act="search-mode" data-m="lexical">Buscar por palavra</button></div>`;
+  }
+  const rows = (sem.results || []).map((r) => `
+    <button class="result" type="button" data-act="doc" data-doc="${esc(r.p)}" data-line="${r.l || 1}">
+      <span class="body"><span class="path">${esc(r.t)}</span>
+        <span class="where"> · ${esc(r.h || "")} · ${esc(r.p)}</span>
+        <div class="snip">${esc((r.x || "").slice(0, 220))}</div></span>
+      <span class="go">Abrir</span></button>`).join("");
+  if (!rows) {
+    return `<div class="empty"><b>Nenhuma passagem para “${esc(s.q)}”.</b><p>Tente outras palavras ou a busca por palavra.</p><button class="btn sm" type="button" data-act="search-mode" data-m="lexical">Buscar por palavra</button></div>`;
+  }
+  return `<div class="results">${rows}</div><p class="meta">Passagens locais · ${nf.format(sem.total || 0)} trechos indexados</p>`;
+}
+
+async function runAsk() {
+  const s = S.search;
+  clearAskPoll();
+  const q = s.q.trim();
+  if (!q) { s.sem = { ...s.sem, state: "idle", results: [], error: "", busy: false }; render(); return; }
+  s.sem = { ...s.sem, busy: true, error: "" };
+  render();
+  try {
+    const r = await call("/ask?q=" + encodeURIComponent(q) + "&coll=" + encodeURIComponent(s.f));
+    s.sem = { ...s.sem, ...r, busy: false };
+    if (r.state === "building") startAskPoll();
+  } catch (e) {
+    s.sem = { ...s.sem, busy: false, state: "unavailable", error: e.message };
+  }
+  render();
+}
+
+function scheduleAsk(delay) {
+  clearTimeout(S.search.askTimer);
+  S.search.askTimer = setTimeout(() => { void runAsk(); }, delay || 350);
+}
+
+function startAskPoll() {
+  const s = S.search;
+  if (!s.sem.poll) {
+    s.sem.poll = setInterval(async () => {
+      try {
+        const st = await call("/ask/status");
+        const poll = s.sem.poll;
+        s.sem = { ...s.sem, ...st, poll };
+        if (st.state === "ready") { clearAskPoll(); void runAsk(); return; }
+        if (st.state === "unavailable") clearAskPoll();
+        if (S.view === "search" && S.search.mode === "semantic") render();
+      } catch { clearAskPoll(); }
+    }, 2000);
+  }
+}
+
+function clearAskPoll() {
+  if (S.search.sem.poll) clearInterval(S.search.sem.poll);
+  S.search.sem.poll = null;
 }
 
 /* ---------------- Open ---------------- */
@@ -2129,6 +2222,8 @@ document.addEventListener("click", (e) => {
   }
   if (act === "clear-search") {
     S.search.q = ""; S.search.ran = false; S.search.files = []; S.search.open = []; S.search.busy = false;
+    clearAskPoll();
+    S.search.sem = { ...S.search.sem, state: "idle", results: [], error: "", busy: false };
     const gs = $("#global-search");
     if (gs) { gs.value = ""; gs.focus(); }
     render();
@@ -2137,7 +2232,21 @@ document.addEventListener("click", (e) => {
   if (act === "sfilter") {
     S.search.f = t.dataset.f;
     S.view = "search";
-    if (S.search.q) void doSearch(); else render();
+    if (S.search.q) { if (S.search.mode === "semantic") void runAsk(); else void doSearch(); }
+    else render();
+    return;
+  }
+  if (act === "search-mode") {
+    const m = t.dataset.m;
+    if (!m || m === S.search.mode) return;
+    clearAskPoll();
+    clearTimeout(searchTimer);
+    clearTimeout(S.search.askTimer);
+    S.search.mode = m;
+    if (m === "semantic" && !ASK_COLLECTIONS.includes(S.search.f)) S.search.f = "all";
+    S.search.sem = { ...S.search.sem, busy: false };
+    if (S.search.q) { if (m === "semantic") void runAsk(); else void doSearch(); }
+    else render();
     return;
   }
   if (act === "retry-search") { void doSearch(); return; }
@@ -2293,8 +2402,15 @@ function onSearchInput() {
   const gs = $("#global-search");
   S.search.q = gs.value;
   if (S.view !== "search") { S.view = "search"; render(); }
-  else { const sub = $("#tb-sub"); if (sub) sub.textContent = S.search.q ? `resultados para “${S.search.q}”` : "índice local · leitura no repositório"; }
-  scheduleSearch(180);
+  else {
+    const sub = $("#tb-sub");
+    if (sub) {
+      const label = S.search.mode === "semantic" ? "por significado" : "resultados";
+      sub.textContent = S.search.q ? `${label} para “${S.search.q}”` : "índice local · leitura no repositório";
+    }
+  }
+  if (S.search.mode === "semantic") scheduleAsk(350);
+  else scheduleSearch(180);
 }
 
 async function watchUpdates() {

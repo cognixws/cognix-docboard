@@ -32,6 +32,22 @@ The index is built in memory by the extension's own process and refreshed on
 demand or after five minutes. No database, no backup promise: the repository
 is the source of truth.
 
+## Ask the docs
+
+The Search view has two modes: **Buscar** (words and PT/EN synonyms, instant)
+and **Perguntar** (meaning). Perguntar uses the embedding model and
+llama-server build the Recall already keeps on this computer (EmbeddingGemma,
+found under the PiCode data folder), started by this extension's process at
+low priority. The first question splits the living docs (decisions, plans,
+architecture, benchmarks, books and the docs root) into passages and embeds
+them; later questions reuse a cache in the extension's own data folder
+(`ask-index.json` and `ask-index.bin`), rebuilt when those docs change.
+
+Nothing leaves the computer: the model, the index and the question are local.
+If the model cannot start, the view says so and offers **Buscar**. The settings
+`embedding_model` (a `.gguf`) and `llama_server` (a binary) override the
+discovery; both are optional.
+
 ## Since the last visit
 
 The page keeps a small marker in the host's key-value (the head, the time and
@@ -146,6 +162,14 @@ different one; a running page also reloads when the extension process restarts
 ```
 PICODE_EXT_PORT=8799 PICODE_EXT_DATA=/tmp/docboard-data \
 DOCBOARD_REPO=/path/to/repo node process.mjs
+```
+
+Ask needs the local model; for development point it at the recall copy:
+
+```
+DOCBOARD_MODEL=~/.picode/recall-semantic/models/embeddinggemma-300M-Q8_0.gguf \
+DOCBOARD_LLAMA=~/.picode/recall-semantic/llama/<release>/llama-server \
+node process.mjs
 ```
 
 `node --test` runs the parser and command tests. The page is plain HTML,

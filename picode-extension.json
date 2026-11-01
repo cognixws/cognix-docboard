@@ -1,10 +1,10 @@
 {
   "id": "docboard",
   "name": "Docboard",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "apiVersion": 10,
   "publisher": "COGNIX[WS]",
-  "description": "The repository's docs in the bottom dock: read, search, see what is open, and operate the development environment. Person-only; no agent tool.",
+  "description": "The repository's docs in the bottom dock: read, search, ask by meaning, see what is open, and operate the development environment. Person-only; no agent tool.",
   "icon": "icon.svg",
   "permissions": ["workspaces:read", "agents:read", "messages:send"],
   "settings": [
@@ -13,6 +13,18 @@
       "label": "Repository",
       "type": "text",
       "description": "Absolute path to the repository to map. Empty uses the first workspace where Docboard is on."
+    },
+    {
+      "key": "embedding_model",
+      "label": "Embedding model (.gguf)",
+      "type": "text",
+      "description": "Optional; empty discovers the EmbeddingGemma Recall keeps under the PiCode data folder."
+    },
+    {
+      "key": "llama_server",
+      "label": "llama-server binary",
+      "type": "text",
+      "description": "Optional; empty discovers the pinned llama.cpp release under the PiCode data folder."
     },
     {
       "key": "allow_commands",

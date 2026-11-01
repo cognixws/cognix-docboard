@@ -6,11 +6,13 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn, execFileSync } from "node:child_process";
+import { createAsk } from "./ask.mjs";
 import { buildCorpus, sortedFor, searchCorpus, catalog, findCommand, commandPlan, COLLECTIONS, egoGraph, hubGraph, collectionGraph, pulseOf, changeObligations, coverageOf, repairLinks, shortestPath, backlinksOf } from "./lib.mjs";
 
 const PORT = Number(process.env.PICODE_EXT_PORT || 8799);
 const EXT_DIR = process.env.PICODE_EXT_DIR || process.cwd();
 const DATA = process.env.PICODE_EXT_DATA || path.join(os.tmpdir(), "docboard-data");
+const DATA_ROOT = DATA.replace(/[\\/]extensions[\\/][^\\/]+[\\/]data$/, "");
 const SECRET = process.env.PICODE_EXT_PROXY_SECRET || "";
 const HOST = process.env.PICODE_URL || "";
 const TOKEN = process.env.PICODE_EXT_TOKEN || "";
@@ -32,6 +34,7 @@ let lastError = "";
 const STARTED = Date.now();
 let repo = "";
 let corpus = null;
+let ask = null;
 
 /* ---------------- Host API (repo discovery) ---------------- */
 
@@ -138,6 +141,7 @@ async function resolveRepo() {
 
 async function ensure(force = false) {
   if (!repo) repo = await resolveRepo();
+  if (!ask) ask = createAsk({ dataDir: DATA, dataRoot: DATA_ROOT, getCorpus: () => ensure(), getSettings: () => settings });
   if (!corpus || force || Date.now() - corpus.builtAt > REFRESH_MS) {
     try {
       corpus = buildCorpus(repo);
@@ -516,6 +520,17 @@ const server = http.createServer(async (req, res) => {
 
     if (p === "/open") {
       return json(res, 200, openPage(c, String(q.get("tab") || "all"), q.get("q") || "", q.get("offset"), q.get("limit")));
+    }
+
+    if (p === "/ask/status") {
+      return json(res, 200, ask ? ask.status() : { state: "idle", done: 0, total: 0, error: "" });
+    }
+
+    if (p === "/ask") {
+      const query = String(q.get("q") || "").trim();
+      if (!query) return json(res, 400, { error: "escreva a pergunta" });
+      const out = await ask.ask(query, String(q.get("coll") || "all"));
+      return json(res, 200, out);
     }
 
     if (p === "/diff") {

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildCorpus, searchCorpus, catalog, commandPlan, findCommand, egoGraph, hubGraph, collectionGraph, backlinksOf, pulseOf, changeObligations, coverageOf, repairLinks, shortestPath } from "./lib.mjs";
+import { askChunks, buildCorpus, searchCorpus, catalog, commandPlan, findCommand, egoGraph, hubGraph, collectionGraph, backlinksOf, pulseOf, changeObligations, coverageOf, repairLinks, shortestPath } from "./lib.mjs";
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "docboard-test-"));
@@ -188,6 +188,17 @@ test("health checks are safe catalog commands", () => {
   }
 });
 
+test("ask chunks split living docs by heading with anchors", () => {
+  const c = buildCorpus(fixture());
+  const chunks = askChunks(c);
+  assert.ok(chunks.length >= 4);
+  const panel = chunks.filter((x) => x.p === "docs/plans/panel.md");
+  assert.ok(panel.length >= 2);
+  assert.ok(panel.every((x) => x.x.length <= 1500 && x.l >= 1 && x.t === "Panel plan"));
+  const arch = chunks.find((x) => x.p === "docs/architecture/one.md");
+  assert.ok(arch && arch.c === "architecture" && arch.t === "One subsystem");
+  assert.ok(!chunks.some((x) => x.c === "handoff" || x.c === "changelog"));
+});
 test("shortest path follows references and reports a bridge when disconnected", () => {
   const c = buildCorpus(fixture());
   const one = shortestPath(c.graph, "docs/architecture/one.md", "docs/plans/panel.md");
