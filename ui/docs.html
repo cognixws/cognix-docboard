@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="docboard-version" content="0.14.0">
+<meta name="docboard-version" content="0.15.0">
 <title>Docs</title>
 <link rel="stylesheet" href="../__picode/tokens.css">
 <style>
@@ -165,6 +165,11 @@
   .result .path { font-weight: 600; font-size: 13px; }
   .result .where { font-size: 11px; color: var(--text-secondary); }
   .result .snip { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+  .byline, .docbyline { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-secondary); }
+  .byline { margin-top: 4px; }
+  .docbyline { margin: 2px 0 10px; font-size: 12px; }
+  .byline .bylbl, .docbyline .bylbl { font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+  .byline b, .docbyline b { color: var(--text-primary); font-weight: 600; }
   .result mark { background: transparent; color: var(--accent); font-weight: 600; }
   .result .go { font-size: 11.5px; color: var(--accent); white-space: nowrap; }
 

@@ -1,10 +1,10 @@
 {
   "id": "docboard",
   "name": "Docboard",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "apiVersion": 10,
   "publisher": "COGNIX[WS]",
-  "description": "The repository's docs in the bottom dock: read, search, ask by meaning, see what is open, and operate the development environment. Person-only; no agent tool.",
+  "description": "The repository's docs in the bottom dock: read, search, ask by meaning, see who last changed a doc and what is open, and operate the development environment. Person-only; no agent tool.",
   "icon": "icon.svg",
   "permissions": ["workspaces:read", "agents:read", "messages:send"],
   "settings": [

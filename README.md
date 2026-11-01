@@ -48,6 +48,16 @@ If the model cannot start, the view says so and offers **Buscar**. The settings
 `embedding_model` (a `.gguf`) and `llama_server` (a binary) override the
 discovery; both are optional.
 
+## Who cares (Quem cuida)
+
+Every document shows its last commit's author, date and short hash in the
+reader. Each semantic passage and the top word-search results show the author
+and date under the text, and the History dialog lists the last five commits
+with their authors. The extension reads git in the repository: no new
+permission, nothing written. When the folder is not a git checkout, or the file
+has no commit, the line says "sem histórico de commit" and the result simply
+has no byline.
+
 ## Since the last visit
 
 The page keeps a small marker in the host's key-value (the head, the time and

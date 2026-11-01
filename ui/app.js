@@ -537,8 +537,9 @@ function renderRead() {
     <div class="crumb"><a href="#" data-act="back-doc">‹ ${esc(coll.name)}</a></div>
     <div class="doc-title">${esc(meta ? meta.title : r.doc.split("/").pop())}</div>
     <div class="meta">${esc(r.doc)}${meta ? " · " + nf.format(meta.size) + " bytes · " + esc(meta.date) : ""}${meta && meta.truncated ? " · trecho (arquivo grande)" : ""}</div>
-    <div class="meta">${last ? `último commit ${esc(last.hash)} · ${esc(last.date)} · ${esc(last.subject)}` : meta ? "sem commit para este arquivo" : ""}
-      ${last ? `<button class="linkbtn" type="button" data-act="history" data-doc="${esc(r.doc)}">Histórico</button>` : ""}</div>
+    <div class="docbyline">${last
+      ? `<span class="bylbl">Quem cuida</span><b>${esc(last.author || "sem autor")}</b><span class="meta">· ${esc(last.date)} · ${esc(last.hash)}</span>`
+      : meta ? `<span class="bylbl">Quem cuida</span><span class="meta">sem histórico de commit</span>` : ""}</div>
     <div class="actions">
       <button class="btn sm" type="button" data-act="copy" data-what="Caminho" data-copy="${esc(r.doc)}">Copiar caminho</button>
       <button class="btn sm" type="button" data-act="copy" data-what="Referência" data-copy="${esc(r.doc)}:1">Copiar referência</button>
@@ -815,7 +816,8 @@ function renderSearch() {
         <button class="result" type="button" data-act="result" data-i="${i}">
           <span class="body"><span class="path">${esc(f.t)}</span>
             <span class="where"> · ${esc((S.collections.find((c) => c.id === f.c) || {}).name || f.c)} · ${esc(f.p)}</span>
-            <div class="snip">${highlight(f.x, s.q)}</div></span>
+            <div class="snip">${highlight(f.x, s.q)}</div>
+            ${f.last && f.last.author ? `<div class="byline"><span class="bylbl">Quem cuida</span> ${esc(f.last.author)} <span class="meta">· ${esc(f.last.date)}</span></div>` : ""}</span>
           <span class="go">Abrir</span></button>`).join("");
       const openRows = s.open.length
         ? `<div class="cmdgroup" style="margin-top:14px">Aberto (${s.open.length})</div>` + s.open.map((it, i) => `
@@ -860,7 +862,8 @@ function semanticResultsHtml() {
     <button class="result" type="button" data-act="doc" data-doc="${esc(r.p)}" data-line="${r.l || 1}">
       <span class="body"><span class="path">${esc(r.t)}</span>
         <span class="where"> · ${esc(r.h || "")} · ${esc(r.p)}</span>
-        <div class="snip">${esc((r.x || "").slice(0, 220))}</div></span>
+        <div class="snip">${esc((r.x || "").slice(0, 220))}</div>
+        ${r.by && r.by.author ? `<div class="byline"><span class="bylbl">Quem cuida</span> ${esc(r.by.author)} <span class="meta">· ${esc(r.by.date)}</span></div>` : ""}</span>
       <span class="go">Abrir</span></button>`).join("");
   if (!rows) {
     return `<div class="empty"><b>Nenhuma passagem para “${esc(s.q)}”.</b><p>Tente outras palavras ou a busca por palavra.</p><button class="btn sm" type="button" data-act="search-mode" data-m="lexical">Buscar por palavra</button></div>`;
@@ -2133,7 +2136,7 @@ function renderDialog() {
     html = dialogHeader("Mensagem a um agente", "O agente recebe de Docboard; a extensão não escreve nos arquivos.") + body;
   } else if (d.kind === "history") {
     const r = d.data || { commits: [] };
-    const rows = (r.commits || []).map((c) => `<div class="covarea"><div class="grow"><span class="mono">${esc(c.hash)}</span> · <span class="meta">${esc(c.date)}</span> · ${esc(c.subject)}</div>
+    const rows = (r.commits || []).map((c) => `<div class="covarea"><div class="grow"><span class="mono">${esc(c.hash)}</span> · <b>${esc(c.author || "sem autor")}</b> · <span class="meta">${esc(c.date)}</span> · ${esc(c.subject)}</div>
       <button class="linkbtn" type="button" data-act="copy" data-what="Hash" data-copy="${esc(c.hash)}">Copiar</button></div>`).join("");
     html = dialogHeader("Histórico", esc(d.path || "")) + (rows || `<p class="meta">Sem commits para este arquivo.</p>`)
       + `<div class="foot"><button class="btn" type="button" data-act="dlg-cancel">Fechar</button></div>`;

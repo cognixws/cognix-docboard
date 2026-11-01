@@ -403,13 +403,23 @@ function readBody(req, max = 1 << 20) {
   });
 }
 
+const whoCache = new Map();
 function lastCommitOf(rel) {
+  if (!rel) return null;
+  const key = repo + "\0" + rel;
+  const hit = whoCache.get(key);
+  if (hit && Date.now() - hit.at < 60000) return hit.last;
+  let last = null;
   try {
-    const out = git(["log", "-1", "--date=short", "--pretty=format:%h\t%ad\t%s", "--", rel], repo, 3000).trim();
-    if (!out) return null;
-    const parts = out.split("\t");
-    return { hash: parts[0] || "", date: parts[1] || "", subject: parts.slice(2).join("\t") };
-  } catch { return null; }
+    const out = git(["log", "-1", "--date=short", "--pretty=format:%h\t%ad\t%an\t%s", "--", rel], repo, 3000).trim();
+    if (out) {
+      const parts = out.split("\t");
+      last = { hash: parts[0] || "", date: parts[1] || "", author: parts[2] || "", subject: parts.slice(3).join("\t") };
+    }
+  } catch { /* no git, no author */ }
+  whoCache.set(key, { at: Date.now(), last });
+  if (whoCache.size > 2000) for (const [k, v] of whoCache) if (Date.now() - v.at > 60000) whoCache.delete(k);
+  return last;
 }
 
 function docOf(c, rel) {
@@ -491,6 +501,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p === "/search") {
       const found = searchCorpus(c, String(q.get("q") || ""), { coll: String(q.get("coll") || "all"), limit: 40 });
+      for (const f of found.files.slice(0, 8)) f.last = lastCommitOf(f.p);
       return json(res, 200, found);
     }
 
@@ -510,10 +521,10 @@ const server = http.createServer(async (req, res) => {
       const rel = String(q.get("path") || "");
       if (!c.text.has(rel)) return json(res, 404, { error: "esse documento não está no índice" });
       let out = "";
-      try { out = git(["log", "-5", "--date=short", "--pretty=format:%h\t%ad\t%s", "--", rel], repo, 4000); } catch { /* none */ }
+      try { out = git(["log", "-5", "--date=short", "--pretty=format:%h\t%ad\t%an\t%s", "--", rel], repo, 4000); } catch { /* none */ }
       const commits = out.split("\n").filter(Boolean).map((line) => {
         const parts = line.split("\t");
-        return { hash: parts[0] || "", date: parts[1] || "", subject: parts.slice(2).join("\t") };
+        return { hash: parts[0] || "", date: parts[1] || "", author: parts[2] || "", subject: parts.slice(3).join("\t") };
       });
       return json(res, 200, { path: rel, commits });
     }
@@ -530,6 +541,13 @@ const server = http.createServer(async (req, res) => {
       const query = String(q.get("q") || "").trim();
       if (!query) return json(res, 400, { error: "escreva a pergunta" });
       const out = await ask.ask(query, String(q.get("coll") || "all"));
+      if (Array.isArray(out.results)) {
+        const by = new Map();
+        for (const r of out.results) {
+          if (!by.has(r.p)) by.set(r.p, lastCommitOf(r.p));
+          r.by = by.get(r.p);
+        }
+      }
       return json(res, 200, out);
     }
 
