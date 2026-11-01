@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn, execFileSync } from "node:child_process";
-import { buildCorpus, sortedFor, searchCorpus, catalog, findCommand, commandPlan, COLLECTIONS, egoGraph, hubGraph, collectionGraph, pulseOf, changeObligations, coverageOf, repairLinks } from "./lib.mjs";
+import { buildCorpus, sortedFor, searchCorpus, catalog, findCommand, commandPlan, COLLECTIONS, egoGraph, hubGraph, collectionGraph, pulseOf, changeObligations, coverageOf, repairLinks, shortestPath } from "./lib.mjs";
 
 const PORT = Number(process.env.PICODE_EXT_PORT || 8799);
 const EXT_DIR = process.env.PICODE_EXT_DIR || process.cwd();
@@ -451,6 +451,18 @@ const server = http.createServer(async (req, res) => {
 
     if (p === "/open") {
       return json(res, 200, openPage(c, String(q.get("tab") || "all"), q.get("q") || "", q.get("offset"), q.get("limit")));
+    }
+
+    if (p === "/docs") {
+      return json(res, 200, { docs: c.files.map((f) => ({ p: f.p, t: f.t, c: f.c })) });
+    }
+
+    if (p === "/path") {
+      const from = String(q.get("from") || "");
+      const to = String(q.get("to") || "");
+      const out = shortestPath(c.graph, from, to);
+      if (out.error) return json(res, 400, out);
+      return json(res, 200, { ...out, repo, builtAt: c.builtAt });
     }
 
     if (p === "/links") {

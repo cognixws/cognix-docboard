@@ -32,6 +32,13 @@ The index is built in memory by the extension's own process and refreshed on
 demand or after five minutes. No database, no backup promise: the repository
 is the source of truth.
 
+## Path
+
+Pick two documents (path or title) and see the shortest chain of references
+between them, forward and backward. The chain lists each step and its kind;
+the graph highlights the path. Disconnected documents report their components
+and the closest pair in a shared collection. Read-only.
+
 ## Health
 
 The Health view diagnoses the environment (process, index age, repo, settings,

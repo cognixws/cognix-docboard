@@ -48,7 +48,7 @@ const S = {
   open: { tab: "all", q: "", offset: 0, questions: [], debts: [], counts: {}, loading: false },
   operar: { groups: [], enabled: false, filter: "", group: "all", runs: [], loading: false, timer: null, worktrees: null },
   health: { data: null, loading: false, error: "", allRunning: false },
-  graph: { scope: "hubs", path: "", data: null, loading: false, error: "" },
+  graph: { scope: "hubs", path: "", from: "", to: "", data: null, docs: null, docsLoading: false, pathError: "", loading: false, error: "" },
   pulse: { data: null, loading: false, error: "" },
   change: { worktrees: null, wt: "", data: null, loading: false, error: "" },
   coverage: { data: null, loading: false, error: "" },
@@ -261,7 +261,8 @@ function syncChrome() {
     sub = S.commandsEnabled ? "comandos do Makefile · pessoa apenas" : "comandos desligados";
   } else if (S.view === "graph") {
     title = "Grafo";
-    sub = S.graph.path ? "ligações de " + S.graph.path : "ligações entre docs do repositório";
+    if (S.graph.scope === "path") sub = S.graph.from && S.graph.to ? `de ${S.graph.from} para ${S.graph.to}` : "dois documentos e a cadeia entre eles";
+    else sub = S.graph.path ? "ligações de " + S.graph.path : "ligações entre docs do repositório";
   } else if (S.view === "pulse") {
     title = "Pulso";
     sub = "o estado das docs agora";
@@ -471,6 +472,7 @@ function renderRead() {
       <button class="btn sm" type="button" data-act="copy" data-what="Caminho" data-copy="${esc(r.doc)}">Copiar caminho</button>
       <button class="btn sm" type="button" data-act="copy" data-what="Referência" data-copy="${esc(r.doc)}:1">Copiar referência</button>
       <button class="btn sm" type="button" data-act="graph-doc" data-doc="${esc(r.doc)}">Grafo</button>
+      <button class="btn sm" type="button" data-act="path-doc" data-doc="${esc(r.doc)}">Caminho</button>
     </div>
     ${body}`;
 
@@ -1139,10 +1141,19 @@ function renderPulse() {
 
 async function prepareGraph(scope, path) {
   const g = S.graph;
+  const prev = g.scope;
   if (scope) g.scope = scope;
   if (path !== undefined) g.path = path;
   if (!g.path && S.read.doc) g.path = S.read.doc;
   if (g.scope === "doc" && !g.path) g.scope = "hubs";
+  if (g.scope === "path") {
+    if (prev !== "path") { g.data = null; g.pathError = ""; }
+    if (!g.from && S.read.doc) g.from = S.read.doc;
+    S.view = "graph";
+    render();
+    if (!g.docs && !g.docsLoading && !g.pathError) void loadPathDocs();
+    return;
+  }
   S.view = "graph";
   g.loading = true;
   g.error = "";
@@ -1160,12 +1171,114 @@ async function prepareGraph(scope, path) {
   render();
 }
 
+async function loadPathDocs() {
+  const g = S.graph;
+  g.docsLoading = true;
+  g.pathError = "";
+  render();
+  try {
+    const r = await call("/docs");
+    g.docs = r.docs || [];
+  } catch (e) { g.pathError = e.message; }
+  g.docsLoading = false;
+  render();
+}
+
+function resolvePathDoc(v) {
+  const docs = S.graph.docs || [];
+  return docs.find((d) => d.p === v) || docs.find((d) => d.t === v) || null;
+}
+
+async function runPath() {
+  const g = S.graph;
+  const fromEl = $("#path-from");
+  const toEl = $("#path-to");
+  const from = resolvePathDoc((fromEl && fromEl.value || "").trim());
+  const to = resolvePathDoc((toEl && toEl.value || "").trim());
+  if (!from || !to) {
+    g.pathError = "Escolha dois documentos da lista: o campo aceita o caminho docs/… ou o título exato.";
+    render();
+    return;
+  }
+  g.from = from.p;
+  g.to = to.p;
+  g.pathError = "";
+  g.loading = true;
+  render();
+  try {
+    const r = await call("/path?from=" + encodeURIComponent(from.p) + "&to=" + encodeURIComponent(to.p));
+    r.scope = "path";
+    g.data = r;
+  } catch (e) {
+    g.pathError = e.message;
+    g.data = null;
+  }
+  g.loading = false;
+  render();
+}
+
+function swapPath() {
+  const a = $("#path-from"), b = $("#path-to");
+  if (!a || !b) return;
+  const t = a.value;
+  a.value = b.value;
+  b.value = t;
+  void runPath();
+}
+
+function pathForm(g) {
+  if (g.docsLoading) return `<div class="sk" style="width:50%"></div><div class="sk" style="width:70%"></div><p class="meta">Carregando ${nf.format(S.stats.docs || 0)} documentos…</p>`;
+  if (g.pathError && !g.docs) return `<div class="empty"><b>Não consegui listar os documentos.</b><p>${esc(g.pathError)}</p><button class="btn sm" type="button" data-act="path-docs-retry">Tentar de novo</button></div>`;
+  const opts = (g.docs || []).map((d) => `<option value="${esc(d.p)}">${esc(d.t)}</option>`).join("");
+  const from = g.from || (S.read.doc || "");
+  const to = g.to || "";
+  return `<datalist id="doc-options">${opts}</datalist>
+    <div class="row" style="align-items:flex-start;margin-bottom:10px">
+      <input id="path-from" class="field" list="doc-options" value="${esc(from)}" placeholder="de — docs/… ou título" style="flex:1;min-width:190px" />
+      <input id="path-to" class="field" list="doc-options" value="${esc(to)}" placeholder="para — docs/… ou título" style="flex:1;min-width:190px" />
+      <button class="btn" type="button" data-act="path-run">Buscar caminho</button>
+      <button class="btn" type="button" data-act="path-swap">Trocar</button>
+    </div>
+    ${g.pathError ? `<p class="meta" style="color:var(--danger)">${esc(g.pathError)}</p>` : ""}`;
+}
+
+function pathChain(d) {
+  const byId = new Map((d.nodes || []).map((n) => [n.id, n]));
+  const parts = [`<button class="btn sm" type="button" data-act="doc" data-doc="${esc(d.from)}">${esc((byId.get(d.from) || {}).t || d.from)}</button>`];
+  for (const st of d.steps || []) {
+    const n = byId.get(st.to) || { t: st.to };
+    parts.push(`<span class="meta" style="margin:0 7px">${st.dir === "out" ? "->" : "<-"} ${esc(st.kind)}</span>`);
+    parts.push(`<button class="btn sm" type="button" data-act="doc" data-doc="${esc(st.to)}">${esc(n.t)}</button>`);
+  }
+  return `<div class="row" style="align-items:center">${parts.join("")}</div>`;
+}
+
+function renderGraphPath(head, g) {
+  const form = pathForm(g);
+  if (!g.data) {
+    return `${head}${form}<div class="empty"><b>Escolha dois documentos.</b><p>A lista aceita o caminho <code>docs/…</code> ou o título; o caminho segue as referências para frente e para trás.</p></div>`;
+  }
+  const d = g.data;
+  if (!d.connected) {
+    const bridge = d.bridge;
+    return `${head}${form}
+      <div class="empty"><b>Sem caminho entre eles.</b><p>Os dois estão em componentes separados (${nf.format(d.componentFrom || 0)} e ${nf.format(d.componentTo || 0)} docs).${bridge ? ` O mais perto: na coleção ${esc((S.collections.find((c) => c.id === bridge.collection) || {}).name || bridge.collection)} — ${esc(bridge.a.t)} e ${esc(bridge.b.t)}; uma referência entre eles ligaria os dois.` : ""}</p>
+      <div class="row">${bridge ? `<button class="btn sm" type="button" data-act="doc" data-doc="${esc(bridge.a.p)}">Abrir ${esc(bridge.a.t)}</button><button class="btn sm" type="button" data-act="doc" data-doc="${esc(bridge.b.p)}">Abrir ${esc(bridge.b.t)}</button>` : ""}</div></div>`;
+  }
+  return `${head}${form}
+    <div class="plain-h section-gap">Caminho · ${nf.format(d.length || 0)} passo(s)</div>
+    ${pathChain(d)}
+    <div class="graphwrap" id="graphwrap" style="margin-top:12px"><svg id="graph" role="img" aria-label="Caminho entre dois documentos"></svg></div>
+    <p class="meta" style="margin-top:8px">${nf.format((d.nodes || []).length)} nós · ${nf.format((d.edges || []).length)} ligações · as setas do grafo são a referência real; a lista acima é o caminho a partir do primeiro.</p>`;
+}
+
 function renderGraph() {
   const g = S.graph;
-  const scopes = [["hubs", "Hubs"], ["collections", "Coleções"]];
+  const scopes = [["hubs", "Hubs"], ["collections", "Coleções"], ["path", "Caminho"]];
   if (S.read.doc) scopes.push(["doc", "Este documento"]);
   const chips = scopes.map(([id, label]) => `<button type="button" data-act="gscope" data-s="${id}" aria-pressed="${g.scope === id}">${label}</button>`).join("");
   const head = `<div class="seg" style="margin-bottom:10px">${chips}</div>`;
+  if (g.scope === "path") return renderGraphPath(head, g);
   if (g.loading) return head + `<div class="graphwrap"><div class="boot"><div class="box"><p class="meta">Montando o grafo…</p><div class="sk" style="width:60%"></div><div class="sk" style="width:80%"></div></div></div></div>`;
   if (g.error) return head + `<div class="empty"><b>Não consegui montar o grafo.</b><p>${esc(g.error)}</p><button class="btn sm" type="button" data-act="graph-retry">Tentar de novo</button></div>`;
   const d = g.data;
@@ -1708,6 +1821,10 @@ document.addEventListener("click", (e) => {
   if (act === "pulse-refresh") { void preparePulse(); return; }
   if (act === "pulse-focus") { const el = document.getElementById(t.dataset.target); if (el) el.scrollIntoView({ block: "start" }); return; }
   if (act === "pulse-graph") { void prepareGraph("hubs", ""); return; }
+  if (act === "path-docs-retry") { S.graph.docs = null; S.graph.pathError = ""; void loadPathDocs(); return; }
+  if (act === "path-run") { void runPath(); return; }
+  if (act === "path-swap") { swapPath(); return; }
+  if (act === "path-doc") { S.graph.from = t.dataset.doc; S.graph.to = ""; S.graph.data = null; S.graph.pathError = ""; void prepareGraph("path", ""); return; }
   if (act === "gscope") { void prepareGraph(t.dataset.s, t.dataset.s === "doc" ? (S.read.doc || "") : ""); return; }
   if (act === "graph-doc") { void prepareGraph("doc", t.dataset.doc); return; }
   if (act === "graph-hubs") { void prepareGraph("hubs", ""); return; }

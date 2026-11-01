@@ -726,6 +726,100 @@ export function coverageOf(repo, corpus, { lastDate = {}, now = Date.now() } = {
 }
 
 
+
+/* ---------------- shortest path ---------------- */
+
+function nodeOf(graph, id) {
+  const n = graph.nodes.get(id);
+  return n ? { id: n.id, t: n.t, c: n.c } : null;
+}
+
+export function shortestPath(graph, from, to) {
+  if (!graph.nodes.has(from) || !graph.nodes.has(to)) return { error: "escolha dois documentos do índice" };
+  if (from === to) return { connected: true, from, to, nodes: [nodeOf(graph, from)], steps: [], edges: [], length: 0 };
+  const adj = adjacency(graph);
+  const parent = new Map([[from, null]]);
+  const dist = new Map([[from, 0]]);
+  const q = [from];
+  let head = 0;
+  let found = false;
+  while (head < q.length && !found) {
+    const cur = q[head++];
+    for (const a of adj.get(cur) || []) {
+      if (parent.has(a.to)) continue;
+      parent.set(a.to, { prev: cur, dir: a.dir, kind: a.kind, w: a.w });
+      dist.set(a.to, (dist.get(cur) || 0) + 1);
+      if (a.to === to) { found = true; break; }
+      q.push(a.to);
+    }
+  }
+  if (!found) {
+    const parentB = new Map([[to, null]]);
+    const distB = new Map([[to, 0]]);
+    const qb = [to];
+    let hb = 0;
+    while (hb < qb.length) {
+      const cur = qb[hb++];
+      for (const a of adj.get(cur) || []) {
+        if (parentB.has(a.to)) continue;
+        parentB.set(a.to, { prev: cur });
+        distB.set(a.to, (distB.get(cur) || 0) + 1);
+        qb.push(a.to);
+      }
+    }
+    const compA = new Set(parent.keys());
+    const compB = new Set(parentB.keys());
+    const best = new Map();
+    for (const [p, d] of dist) {
+      const c = (graph.nodes.get(p) || {}).c;
+      if (!c) continue;
+      const cur = best.get(c);
+      if (!cur || d < cur.dA) best.set(c, { ...(cur || {}), c, a: p, dA: d });
+    }
+    for (const [p, d] of distB) {
+      const c = (graph.nodes.get(p) || {}).c;
+      if (!c) continue;
+      const cur = best.get(c);
+      if (!cur) continue;
+      if (cur.b === undefined || d < cur.dB) best.set(c, { ...cur, b: p, dB: d });
+    }
+    let bridge = null;
+    for (const cand of best.values()) {
+      if (cand.a === undefined || cand.b === undefined) continue;
+      const score = cand.dA + cand.dB;
+      if (!bridge || score < bridge.score) bridge = { ...cand, score };
+    }
+    return {
+      connected: false, from, to,
+      componentFrom: compA.size, componentTo: compB.size,
+      bridge: bridge ? { collection: bridge.c, a: nodeOf(graph, bridge.a), b: nodeOf(graph, bridge.b), distance: bridge.score } : null,
+    };
+  }
+  const chain = [to];
+  let cur = to;
+  while (cur !== from) {
+    const p = parent.get(cur);
+    if (!p) break;
+    chain.push(p.prev);
+    cur = p.prev;
+  }
+  chain.reverse();
+  const steps = [];
+  const edges = [];
+  for (let i = 0; i < chain.length - 1; i++) {
+    const a = chain[i];
+    const b = chain[i + 1];
+    const p = parent.get(b);
+    steps.push({ from: a, to: b, dir: p.dir, kind: p.kind, w: p.w });
+    edges.push({ s: p.dir === "out" ? a : b, t: p.dir === "out" ? b : a, kind: p.kind, w: p.w });
+  }
+  return {
+    connected: true, from, to, length: chain.length - 1,
+    nodes: chain.map((id) => ({ ...nodeOf(graph, id), current: id === from || id === to })),
+    steps, edges,
+  };
+}
+
 /* ---------------- repair links ---------------- */
 
 function editDistance(a, b) {
