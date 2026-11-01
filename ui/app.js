@@ -354,12 +354,26 @@ function buildRail() {
   }));
 }
 
+function pageVersion() {
+  const m = document.querySelector('meta[name="docboard-version"]');
+  return m ? String(m.content) : "";
+}
+
 async function boot() {
   S.ready = false;
   S.error = "";
   render();
   try {
     const ov = await call("/overview");
+    const pv = pageVersion();
+    if (pv && ov.version && pv !== ov.version) {
+      const u = new URL(location.href);
+      if (u.searchParams.get("v") !== ov.version) {
+        u.searchParams.set("v", ov.version);
+        location.replace(u.toString());
+        return;
+      }
+    }
     S.overview = ov;
     S.collections = ov.collections || [];
     S.stats = ov.stats || {};
@@ -370,6 +384,7 @@ async function boot() {
     render();
     void loadRuns();
     void loadHealth();
+    void watchUpdates();
   } catch (e) {
     S.error = e.message || String(e);
     render();
@@ -1341,6 +1356,21 @@ function onSearchInput() {
   if (S.view !== "search") { S.view = "search"; render(); }
   else { const sub = $("#tb-sub"); if (sub) sub.textContent = S.search.q ? `resultados para “${S.search.q}”` : "índice local · leitura no repositório"; }
   scheduleSearch(180);
+}
+
+async function watchUpdates() {
+  try {
+    if (typeof picode === "undefined") return;
+    const events = await picode.use("events");
+    if (!events || !events.onChange) return;
+    events.onChange((e) => {
+      if (!e || e.type !== "extension.process") return;
+      const data = e.data || {};
+      if (data.id && data.id !== "docboard") return;
+      const state = data.process && data.process.state;
+      if (state === "running") location.reload();
+    });
+  } catch { /* the page still works without events */ }
 }
 
 function init() {

@@ -71,6 +71,10 @@ Never `--force`, never `pkill`, never `tmux kill-server`. A stopped process
 answers 503 and the page says why. The dock page never holds PiCode's
 session; it talks only to this extension's process.
 
+The page carries its version and reloads itself when the process reports a
+different one; a running page also reloads when the extension process restarts
+(the `extension.process` event), so an update shows up without a manual reload.
+
 ## Development
 
 ```
