@@ -13,7 +13,7 @@ command that changes a file on an agent's behalf.
 In COGNIX[WS]: Extensions → Install, with the repository URL:
 
 ```
-https://github.com/cognixws/picode-docboard
+https://github.com/cognixws/cognix-docboard
 ```
 
 It adds the **Docs** tab to the bottom dock and the Docs tile to Apps. The
