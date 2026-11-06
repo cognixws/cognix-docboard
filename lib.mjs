@@ -1023,18 +1023,8 @@ export function sortedFor(corpus, coll) {
 /* ---------------- commands ---------------- */
 
 export const COMMANDS = [
-  { group: "Sessão", items: [
-    { id: "worktree-status", label: "Status dos worktrees", when: "ver o que está em voo e quem está sujo", tier: "read", cost: "—", kind: "run" },
-    { id: "worktree", label: "Novo worktree", when: "abrir uma árvore isolada para uma tarefa nova", tier: "write", cost: "~30 s", kind: "worktree", params: ["name"] },
-    { id: "ci-scoped", label: "CI scoped", when: "os gates que este diff pode quebrar, durante a iteração", tier: "write", cost: "1–5 min", kind: "run" },
-    { id: "close", label: "Fechar sessão", when: "encerrar a sessão de um worktree (o rito completo)", tier: "write", cost: "2–8 min", kind: "close", params: ["worktree"] },
-    { id: "close-summary", label: "Resumo do close", when: "o que a nota de handoff e o fragmento de changelog precisam", tier: "read", cost: "instantâneo", kind: "run" },
-    { id: "land", label: "Enfileirar land", when: "enfileirar o branch; a fila e os veredictos ficam na aba Deliveries", tier: "owner", cost: "fila", kind: "land", params: ["branch"] },
-  ]},
   { group: "Documentação", items: [
-    { id: "handoff", label: "Renderizar o board", when: "regerar docs/handoff.md a partir das notas e tópicos", tier: "read", cost: "instantâneo", kind: "run" },
     { id: "changelog", label: "Dobrar changelog", when: "fundir os fragmentos no CHANGELOG (no main)", tier: "write", cost: "~1 min", kind: "run" },
-    { id: "adr", label: "Semear ADR", when: "abrir o próximo registro com a linha de Boundary", tier: "write", cost: "instantâneo", kind: "adr", params: ["name"] },
     { id: "book", label: "Semear book", when: "criar um runbook/playbook/SOP a partir do template", tier: "write", cost: "instantâneo", kind: "book", params: ["name", "type"] },
     { id: "books", label: "Catálogo de books", when: "regerar docs/books/README.md", tier: "write", cost: "instantâneo", kind: "run" },
     { id: "docs-check", label: "docs-check", when: "paridade de imagens e docs gerados (sem captura)", tier: "read", cost: "~10–30 s", kind: "run" },

@@ -86,11 +86,10 @@ test("catalog hides desktop-restart off Windows", () => {
 
 test("commandPlan validates parameters and chooses the cwd", () => {
   const ctx = { repo: "/repo", platform: "linux", hasMakefile: true, worktrees: ["/repo/.worktrees/a"] };
-  assert.deepEqual(commandPlan("worktree", { name: "docs-board" }, ctx).argv, ["worktree", "NAME=docs-board"]);
-  assert.equal(commandPlan("close", { worktree: "/repo/.worktrees/a" }, ctx).cwd, "/repo/.worktrees/a");
-  assert.match(commandPlan("close", { worktree: "/tmp/no" }, ctx).error, /worktree/);
-  assert.deepEqual(commandPlan("land", { branch: "feat/x" }, ctx).argv, ["land", "BRANCH=feat/x"]);
-  assert.match(commandPlan("land", { branch: "x" }, ctx).error, /branch/);
+  // The flow's verbs live in the Dev flow now (owner, 2026-11-06).
+  for (const id of ["worktree", "worktree-status", "ci-scoped", "close", "close-summary", "land", "handoff", "adr"]) {
+    assert.match(commandPlan(id, {}, ctx).error, /catálogo/, id);
+  }
   assert.deepEqual(commandPlan("book", { name: "run", type: "runbook" }, ctx).argv, ["book", "NAME=run", "TYPE=runbook"]);
   assert.match(commandPlan("book", { name: "run", type: "nope" }, ctx).error, /tipo/);
   assert.equal(commandPlan("deploy", {}, { ...ctx, main: "/main" }).cwd, "/main");

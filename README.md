@@ -148,16 +148,18 @@ install). Nothing leaves the computer.
 The commands are a fixed catalog, executed as argv (never a shell string) in
 the repository root or a chosen worktree:
 
-- **Sessão**: worktree status, new worktree, `ci-scoped`, close, close
-  summary, land (queued in the Deliveries panel; not duplicated here).
-- **Documentação**: handoff, changelog, ADR, book, books, docs-check, vale,
-  archive old notes.
+- **Documentação**: changelog, book, books, docs-check, vale, archive old
+  notes.
 - **Build e UI**: web, build, dev, ui, atlas, atlas-shot, cover, xray.
 - **Ambiente**: scratch, hooks-check, keys-drift, flakes, desktop-test.
 - **Deploy e restart**: deploy and the desktop restart (Windows only).
   Owner-grade: one at a time, never forced; `make deploy` refuses while an
   agent is mid-turn, and the receipt says so.
 - **Manutenção**: worktree GC and the tool A/B (cost stated before it runs).
+
+A branch's checks, close and land, worktree status, the notes board and a
+new ADR live in the Dev flow (owner, 2026-11-06): Operar opens with a line
+that leads there.
 
 Never `--force`, never `pkill`, never `tmux kill-server`. A stopped process
 answers 503 and the page says why. The dock page never holds PiCode's

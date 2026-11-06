@@ -381,6 +381,16 @@ function toast(text) {
   setTimeout(() => el.remove(), 3800);
 }
 
+// The flow's verbs (check, close, land, the notes board) moved to the Dev
+// flow (owner, 2026-11-06): its page, as an app, picks the workspace.
+async function openDevflow() {
+  try {
+    const links = typeof picode !== "undefined" ? await picode.use("links") : null;
+    if (links && links.open) { await links.open(location.origin + "/#/extensions/picode-devflow/pages/board"); return; }
+  } catch { /* fall through */ }
+  toast("Abra o Dev flow pela aba do workspace.");
+}
+
 async function copyText(text, what) {
   try {
     if (typeof picode !== "undefined") {
@@ -1059,7 +1069,8 @@ function renderOperar() {
   const receipts = o.runs.filter((r) => r.status !== "running").slice(0, 4);
   const groups = ["all"].concat(o.groups.map((g) => g.group));
   const gchips = groups.map((g) => `<button type="button" data-act="ogroup" data-g="${esc(g)}" aria-pressed="${o.group === g}">${g === "all" ? "Todos" : esc(g)}</button>`).join("");
-  return `<div id="runs"><div class="listhead"><b>Execuções</b><span class="meta">reais</span></div>
+  return `<div class="flowline"><span>Checks, close e land de cada branch ficam no Dev flow.</span><button class="btn sm" type="button" data-act="open-devflow">Abrir o Dev flow</button></div>
+    <div id="runs"><div class="listhead"><b>Execuções</b><span class="meta">reais</span></div>
       ${(running.concat(receipts)).map(runHtml).join("") || `<p class="meta">Nenhuma execução nesta sessão. Tudo o que rodar deixa um recibo.</p>`}</div>
     <div class="seg section-gap" style="margin-bottom:10px">${gchips}</div>
     <div class="fieldwrap" style="margin-bottom:12px"><input id="op-filter" type="search" placeholder="Filtrar comandos…" value="${esc(o.filter)}" aria-label="Filtrar comandos" /></div>
@@ -2201,6 +2212,7 @@ document.addEventListener("click", (e) => {
   const act = t.dataset.act;
 
   if (act === "retry-boot" || act === "reload") { void boot(); return; }
+  if (act === "open-devflow") { void openDevflow(); return; }
   if (act === "coll") { void openCollection(t.dataset.coll); return; }
   if (act === "doc") { e.preventDefault(); void openDoc(t.dataset.doc, t.dataset.line ? Number(t.dataset.line) : null); return; }
   if (act === "back-doc") { e.preventDefault(); backFromDoc(); return; }
